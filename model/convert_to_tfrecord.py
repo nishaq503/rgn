@@ -1,7 +1,9 @@
 # imports
-import sys
 import re
+import sys
+
 import tensorflow as tf
+
 from utils import switch
 
 # Constants

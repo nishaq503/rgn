@@ -19,10 +19,11 @@ __author__ = "Mohammed AlQuraishi"
 __copyright__ = "Copyright 2018, Harvard Medical School"
 __license__ = "MIT"
 
+import collections
+
 # Imports
 import numpy as np
 import tensorflow as tf
-import collections
 
 # Constants
 NUM_DIMENSIONS = 3
