@@ -21,7 +21,6 @@ __license__ = "MIT"
 
 import collections
 
-# Imports
 import numpy as np
 import tensorflow as tf
 
@@ -42,7 +41,7 @@ def angularize(input_tensor, name=None):
         return tf.multiply(np.pi, tf.cos(input_tensor + (np.pi / 2)), name=scope)
 
 
-def reduce_mean_angle(weights, angles, use_complex=False, name=None):
+def reduce_mean_angle(radii, angles, use_complex=False, name=None):
     """ Computes the weighted mean of angles. Accepts option to compute use complex exponentials or real numbers.
 
         Complex number-based version is giving wrong gradients for some reason, but forward calculation is fine.
@@ -50,7 +49,7 @@ def reduce_mean_angle(weights, angles, use_complex=False, name=None):
         See https://en.wikipedia.org/wiki/Mean_of_circular_quantities
 
     Args:
-        weights: [BATCH_SIZE, NUM_ANGLES]
+        radii: [BATCH_SIZE, NUM_ANGLES]
         angles:  [NUM_ANGLES, NUM_DIHEDRALS]
 
     Returns:
@@ -58,26 +57,26 @@ def reduce_mean_angle(weights, angles, use_complex=False, name=None):
 
     """
 
-    with tf.name_scope(name, 'reduce_mean_angle', [weights, angles]) as scope:
-        weights = tf.convert_to_tensor(weights, name='weights')
+    with tf.name_scope(name, 'reduce_mean_angle', [radii, angles]) as scope:
+        radii = tf.convert_to_tensor(radii, name='radii')
         angles = tf.convert_to_tensor(angles, name='angles')
 
         if use_complex:
             # use complex-valued exponentials for calculation
-            cwts = tf.complex(weights, 0.)  # cast to complex numbers
+            c_rads = tf.complex(radii, 0.)  # cast to complex numbers
             exps = tf.exp(tf.complex(0., angles))  # convert to point on complex plane
 
-            unit_coords = tf.matmul(cwts, exps)  # take the weighted mixture of the unit circle coordinates
+            unit_coords = tf.matmul(c_rads, exps)  # take the weighted mixture of the unit circle coordinates
 
             return tf.angle(unit_coords, name=scope)  # return angle of averaged coordinate
 
         else:
             # use real-numbered pairs of values
-            sins = tf.sin(angles)
-            coss = tf.cos(angles)
+            sines = tf.sin(angles)
+            cosines = tf.cos(angles)
 
-            y_coords = tf.matmul(weights, sins)
-            x_coords = tf.matmul(weights, coss)
+            y_coords = tf.matmul(radii, sines)
+            x_coords = tf.matmul(radii, cosines)
 
             return tf.atan2(y_coords, x_coords, name=scope)
 
@@ -109,7 +108,7 @@ def reduce_l2_norm(input_tensor, reduction_indices=None, keep_dims=None, weights
         )
 
 
-def reduce_l1_norm(input_tensor, reduction_indices=None, keep_dims=None, weights=None, nonnegative=True, name=None):
+def reduce_l1_norm(input_tensor, reduction_indices=None, keep_dims=None, weights=None, non_negative=True, name=None):
     """ Computes the (possibly weighted) L1 norm of a tensor along the dimensions given in reduction_indices.
 
     Args:
@@ -123,7 +122,7 @@ def reduce_l1_norm(input_tensor, reduction_indices=None, keep_dims=None, weights
     with tf.name_scope(name, 'reduce_l1_norm', [input_tensor]) as scope:
         input_tensor = tf.convert_to_tensor(input_tensor, name='input_tensor')
 
-        if not nonnegative:
+        if not non_negative:
             input_tensor = tf.abs(input_tensor)
         if weights is not None:
             input_tensor = input_tensor * weights
@@ -143,19 +142,28 @@ def dihedral_to_point(dihedral, r=BOND_LENGTHS, theta=BOND_ANGLES, name=None):
     """
 
     with tf.name_scope(name, 'dihedral_to_point', [dihedral]) as scope:
-        dihedral = tf.convert_to_tensor(dihedral, name='dihedral')  # [NUM_STEPS, BATCH_SIZE, NUM_DIHEDRALS]
+        # [NUM_STEPS, BATCH_SIZE, NUM_DIHEDRALS]
+        dihedral = tf.convert_to_tensor(dihedral, name='dihedral')
 
         num_steps = tf.shape(dihedral)[0]
-        batch_size = dihedral.get_shape().as_list()[
-            1]  # important to use get_shape() to keep batch_size fixed for performance reasons
+        # important to use get_shape() to keep batch_size fixed for performance reasons
+        batch_size = dihedral.get_shape().as_list()[1]
 
         r_cos_theta = tf.constant(r * np.cos(np.pi - theta), name='r_cos_theta')  # [NUM_DIHEDRALS]
         r_sin_theta = tf.constant(r * np.sin(np.pi - theta), name='r_sin_theta')  # [NUM_DIHEDRALS]
 
-        pt_x = tf.tile(tf.reshape(r_cos_theta, [1, 1, -1]), [num_steps, batch_size, 1],
-                       name='pt_x')  # [NUM_STEPS, BATCH_SIZE, NUM_DIHEDRALS]
-        pt_y = tf.multiply(tf.cos(dihedral), r_sin_theta, name='pt_y')  # [NUM_STEPS, BATCH_SIZE, NUM_DIHEDRALS]
-        pt_z = tf.multiply(tf.sin(dihedral), r_sin_theta, name='pt_z')  # [NUM_STEPS, BATCH_SIZE, NUM_DIHEDRALS]
+        pt_x = tf.tile(
+            tf.reshape(r_cos_theta, [1, 1, -1]),
+            [num_steps, batch_size, 1],
+            name='pt_x')  # [NUM_STEPS, BATCH_SIZE, NUM_DIHEDRALS]
+        pt_y = tf.multiply(
+            tf.cos(dihedral),
+            r_sin_theta,
+            name='pt_y')  # [NUM_STEPS, BATCH_SIZE, NUM_DIHEDRALS]
+        pt_z = tf.multiply(
+            tf.sin(dihedral),
+            r_sin_theta,
+            name='pt_z')  # [NUM_STEPS, BATCH_SIZE, NUM_DIHEDRALS]
 
         pt = tf.stack([pt_x, pt_y, pt_z])  # [NUM_DIMS, NUM_STEPS, BATCH_SIZE, NUM_DIHEDRALS]
         pt_perm = tf.transpose(pt, perm=[1, 3, 2, 0])  # [NUM_STEPS, NUM_DIHEDRALS, BATCH_SIZE, NUM_DIMS]
@@ -169,8 +177,8 @@ def dihedral_to_point(dihedral, r=BOND_LENGTHS, theta=BOND_ANGLES, name=None):
 def point_to_coordinate(pt, num_fragments=6, parallel_iterations=4, swap_memory=False, name=None):
     """ Takes points from dihedral_to_point and sequentially converts them into the coordinates of a 3D structure.
 
-        Reconstruction is done in parallel, by independently reconstructing num_fragments fragments and then 
-        reconstituting the chain at the end in reverse order. The core reconstruction algorithm is NeRF, based on 
+        Reconstruction is done in parallel, by independently reconstructing num_fragments fragments and then
+        reconstituting the chain at the end in reverse order. The core reconstruction algorithm is NeRF, based on
         DOI: 10.1002/jcc.20237 by Parsons et al. 2005. The parallelized version is described in XXX.
 
     Args:
@@ -194,18 +202,26 @@ def point_to_coordinate(pt, num_fragments=6, parallel_iterations=4, swap_memory=
         # initial three coordinates (specifically chosen to eliminate need for extraneous matmul)
         Triplet = collections.namedtuple('Triplet', 'a, b, c')
         batch_size = pt.get_shape().as_list()[1]  # BATCH_SIZE
-        init_mat = np.array([[-np.sqrt(1.0 / 2.0), np.sqrt(3.0 / 2.0), 0], [-np.sqrt(2.0), 0, 0], [0, 0, 0]],
+        init_mat = np.array([[-np.sqrt(1.0 / 2.0), np.sqrt(3.0 / 2.0), 0],
+                             [-np.sqrt(2.0), 0, 0], [0, 0, 0]],
                             dtype='float32')
-        init_coords = Triplet(*[tf.reshape(tf.tile(row[np.newaxis], tf.stack([num_fragments * batch_size, 1])),
-                                           [num_fragments, batch_size, NUM_DIMENSIONS]) for row in init_mat])
-        # NUM_DIHEDRALS x [NUM_FRAGS, BATCH_SIZE, NUM_DIMENSIONS]
+
+        init_coords = Triplet(  # NUM_DIHEDRALS x [NUM_FRAGS, BATCH_SIZE, NUM_DIMENSIONS]
+            *[tf.reshape(tf.tile(row[np.newaxis],
+                                 tf.stack([num_fragments * batch_size, 1])
+                                 ),
+                         [num_fragments, batch_size, NUM_DIMENSIONS]
+                         ) for row in init_mat]
+        )
 
         # pad points to yield equal-sized fragments
-        r = ((num_fragments - (
-                    s % num_fragments)) % num_fragments)  # (NUM_FRAGS x FRAG_SIZE) - (NUM_STEPS x NUM_DIHEDRALS)
+        r = ((num_fragments  # (NUM_FRAGS x FRAG_SIZE) - (NUM_STEPS x NUM_DIHEDRALS)
+              - (s % num_fragments))
+             % num_fragments)
         pt = tf.pad(pt, [[0, r], [0, 0], [0, 0]])  # [NUM_FRAGS x FRAG_SIZE, BATCH_SIZE, NUM_DIMENSIONS]
-        pt = tf.reshape(pt, [num_fragments, -1, batch_size,
-                             NUM_DIMENSIONS])  # [NUM_FRAGS, FRAG_SIZE,  BATCH_SIZE, NUM_DIMENSIONS]
+        pt = tf.reshape(pt,  # [NUM_FRAGS, FRAG_SIZE,  BATCH_SIZE, NUM_DIMENSIONS]
+                        [num_fragments, -1, batch_size, NUM_DIMENSIONS]
+                        )
         pt = tf.transpose(pt, perm=[1, 0, 2, 3])  # [FRAG_SIZE, NUM_FRAGS,  BATCH_SIZE, NUM_DIMENSIONS]
 
         # extension function used for single atom reconstruction and whole fragment alignment
@@ -243,22 +259,27 @@ def point_to_coordinate(pt, num_fragments=6, parallel_iterations=4, swap_memory=
             coord = extend(tri, pt[i_], True)
             return [i_ + 1, Triplet(tri.b, tri.c, coord), coords_ta_.write(i_, coord)]
 
-        _, tris, coords_pretrans_ta = tf.while_loop(lambda i_, _1, _2: i_ < s_padded, loop_extend,
-                                                    [i, init_coords, coords_ta],
-                                                    parallel_iterations=parallel_iterations, swap_memory=swap_memory)
+        _, tris, coords_pre_trans_ta = tf.while_loop(
+            lambda i_, _1, _2: i_ < s_padded,
+            loop_extend,
+            [i, init_coords, coords_ta],
+            parallel_iterations=parallel_iterations,
+            swap_memory=swap_memory
+        )
         # NUM_DIHEDRALS x [NUM_FRAGS, BATCH_SIZE, NUM_DIMENSIONS],
         # FRAG_SIZE x [NUM_FRAGS, BATCH_SIZE, NUM_DIMENSIONS]
 
         # loop over NUM_FRAGS in reverse order, bringing all the downstream fragments in alignment with current fragment
-        coords_pretrans = tf.transpose(coords_pretrans_ta.stack(),
-                                       perm=[1, 0, 2, 3])  # [NUM_FRAGS, FRAG_SIZE, BATCH_SIZE, NUM_DIMENSIONS]
-        i = tf.shape(coords_pretrans)[0]  # NUM_FRAGS
+        coords_pre_trans = tf.transpose(
+            coords_pre_trans_ta.stack(),
+            perm=[1, 0, 2, 3])  # [NUM_FRAGS, FRAG_SIZE, BATCH_SIZE, NUM_DIMENSIONS]
+        i = tf.shape(coords_pre_trans)[0]  # NUM_FRAGS
 
         def loop_trans(i_, coords_):
             transformed_coords = extend(Triplet(*[di[i_] for di in tris]), coords_, False)
-            return [i_ - 1, tf.concat([coords_pretrans[i_], transformed_coords], 0)]
+            return [i_ - 1, tf.concat([coords_pre_trans[i_], transformed_coords], 0)]
 
-        _, coords_trans = tf.while_loop(lambda i_, _: i_ > -1, loop_trans, [i - 2, coords_pretrans[-1]],
+        _, coords_trans = tf.while_loop(lambda i_, _: i_ > -1, loop_trans, [i - 2, coords_pre_trans[-1]],
                                         parallel_iterations=parallel_iterations, swap_memory=swap_memory)
         # [NUM_FRAGS x FRAG_SIZE, BATCH_SIZE, NUM_DIMENSIONS]
 

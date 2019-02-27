@@ -19,7 +19,6 @@ __author__ = "Mohammed AlQuraishi"
 __copyright__ = "Copyright 2018, Harvard Medical School"
 __license__ = "MIT"
 
-# Imports
 import numpy as np
 import tensorflow as tf
 
@@ -28,12 +27,16 @@ NUM_AAS = 20
 NUM_DIMENSIONS = 3
 NUM_DIHEDRALS = 3
 
-### Public functions
-# These functions expose a public interface that properly encapsulates their internals
-# using tensorflow scoping operations and such. While they are primarily used by the
-# GeomNetModel, they may also have general utility beyond it. All these functions
-# are strictly stateless, possessing no internal TF variables.
+"""
+Public functions
+These functions expose a public interface that properly encapsulates their internals
+using tensorflow scoping operations and such. While they are primarily used by the
+GeomNetModel, they may also have general utility beyond it. All these functions
+are strictly stateless, possessing no internal TF variables.
+"""
 
+
+# noinspection PyUnusedLocal
 def masking_matrix(mask, name=None):
     """ Constructs a masking matrix to zero out pairwise distances due to missing residues or padding. 
 
@@ -58,6 +61,7 @@ def masking_matrix(mask, name=None):
 
         return matrix_mask
 
+
 def effective_steps(masks, num_edge_residues, name=None):
     """ Returns the effective number of steps, i.e. number of residues that are non-missing and are not just
         padding, given a masking matrix.
@@ -74,14 +78,19 @@ def effective_steps(masks, num_edge_residues, name=None):
 
     with tf.name_scope(name, 'effective_steps', [masks]) as scope:
         masks = tf.convert_to_tensor(masks, name='masks')
-        
+
         traces = tf.matrix_diag_part(tf.transpose(masks, [2, 0, 1]))
-        eff_stepss = tf.add(tf.reduce_sum(traces, [1]), num_edge_residues, name=scope) # NUM_EDGE_RESIDUES shouldn't be here, but I'm keeping it for 
-                                                                                       # legacy reasons. Just be clear that it's _always_ wrong to have
-                                                                                       # it here, even when it's not equal to 0.
+        eff_steps = tf.add(tf.reduce_sum(traces, [1]),
+                           num_edge_residues,
+                           name=scope)
+        # NUM_EDGE_RESIDUES shouldn't be here, but I'm keeping it for
+        # legacy reasons. Just be clear that it's _always_ wrong to have
+        # it here, even when it's not equal to 0.
 
-        return eff_stepss
+        return eff_steps
 
+
+# noinspection PyUnusedLocal
 def read_protein(filename_queue, max_length, num_edge_residues, num_evo_entries, name=None):
     """ Reads and parses a protein TF Record. 
 
@@ -116,20 +125,35 @@ def read_protein(filename_queue, max_length, num_edge_residues, num_evo_entries,
         _, serialized_example = reader.read(filename_queue)
 
         # Parse TF Record
-        context, features = tf.parse_single_sequence_example(serialized_example,
-                                context_features={'id': tf.FixedLenFeature((1,), tf.string)},
-                                sequence_features={
-                                    'primary':      tf.FixedLenSequenceFeature((1,),               tf.int64),
-                                    'evolutionary': tf.FixedLenSequenceFeature((num_evo_entries,), tf.float32, allow_missing=True),
-                                    'secondary':    tf.FixedLenSequenceFeature((1,),               tf.int64,   allow_missing=True),
-                                    'tertiary':     tf.FixedLenSequenceFeature((NUM_DIMENSIONS,),  tf.float32, allow_missing=True),
-                                    'mask':         tf.FixedLenSequenceFeature((1,),               tf.float32, allow_missing=True)})
+        context, features = tf.parse_single_sequence_example(
+            serialized_example,
+            context_features={'id': tf.FixedLenFeature((1,), tf.string)},
+            sequence_features={'primary': tf.FixedLenSequenceFeature((1,), tf.int64),
+                               'evolutionary': tf.FixedLenSequenceFeature(
+                                   (num_evo_entries,),
+                                   tf.float32,
+                                   allow_missing=True),
+                               'secondary': tf.FixedLenSequenceFeature(
+                                   (1,),
+                                   tf.int64,
+                                   allow_missing=True),
+                               'tertiary': tf.FixedLenSequenceFeature(
+                                   (NUM_DIMENSIONS,),
+                                   tf.float32,
+                                   allow_missing=True),
+                               'mask': tf.FixedLenSequenceFeature(
+                                   (1,),
+                                   tf.float32,
+                                   allow_missing=True)
+                               }
+        )
+
         id_ = context['id'][0]
-        primary =   tf.to_int32(features['primary'][:, 0])
-        evolutionary =          features['evolutionary']
+        primary = tf.to_int32(features['primary'][:, 0])
+        evolutionary = features['evolutionary']
         secondary = tf.to_int32(features['secondary'][:, 0])
-        tertiary =              features['tertiary']
-        mask =                  features['mask'][:, 0]
+        tertiary = features['tertiary']
+        mask = features['mask'][:, 0]
 
         # Predicate for when to retain protein
         pri_length = tf.size(primary)
@@ -139,14 +163,19 @@ def read_protein(filename_queue, max_length, num_edge_residues, num_evo_entries,
         one_hot_primary = tf.one_hot(primary, NUM_AAS)
 
         # Generate tertiary masking matrix. If mask is missing then assume all residues are present
-        mask = tf.cond(tf.not_equal(tf.size(mask), 0), lambda: mask, lambda: tf.ones([pri_length - num_edge_residues]))
-        ter_mask = masking_matrix(mask, name='ter_mask')        
+        mask = tf.cond(
+            tf.not_equal(tf.size(mask), 0),
+            lambda: mask,
+            lambda: tf.ones([pri_length - num_edge_residues])
+        )
+        ter_mask = masking_matrix(mask, name='ter_mask')
 
         # Return tuple
         return id_, one_hot_primary, evolutionary, secondary, tertiary, ter_mask, pri_length, keep
 
+
 def curriculum_weights(base, slope, max_seq_length, name=None):
-    ''' Returns a tensor of weights that correspond to the current curriculum, as parametrized by base and slope.
+    """ Returns a tensor of weights that correspond to the current curriculum, as parametrized by base and slope.
 
     Args:
         base: Value of the base parameter, a TF tensor that is expected to change as training progresses.
@@ -156,15 +185,16 @@ def curriculum_weights(base, slope, max_seq_length, name=None):
     Returns:
         [MAX_SEQ_LENGTH - 1]
 
-    '''
+    """
 
     with tf.name_scope(name, 'curriculum_weights', [base]) as scope:
         base = tf.convert_to_tensor(base, name='base')
 
-        steps = tf.to_float(tf.range(max_seq_length - 1)) # The minus one factor is because we ignore self-distances.
-        weights = tf.sigmoid(-(slope * (steps - base)), name=scope) 
+        steps = tf.to_float(tf.range(max_seq_length - 1))  # The minus one factor is because we ignore self-distances.
+        weights = tf.sigmoid(-(slope * (steps - base)), name=scope)
 
         return weights
+
 
 def weighting_matrix(weights, name=None):
     """ Takes a vector of weights and returns a weighting matrix in which the ith weight is 
@@ -178,7 +208,8 @@ def weighting_matrix(weights, name=None):
         tensor values. This interaction is subtle however.
 
     Args:
-        weights: Curriculum weights. A TF tensor that is expected to change as curriculum progresses. [MAX_SEQ_LENGTH - 1]
+        weights: Curriculum weights. A TF tensor that is expected to change as curriculum progresses.
+                 [MAX_SEQ_LENGTH - 1]
 
     Returns
         [MAX_SEQ_LENGTH, MAX_SEQ_LENGTH]
@@ -189,27 +220,39 @@ def weighting_matrix(weights, name=None):
         weights = tf.convert_to_tensor(weights, name='weights')
 
         max_seq_length = weights.get_shape().as_list()[0] + 1
-        split_indices = np.diag_indices(max_seq_length)   
+        split_indices = np.diag_indices(max_seq_length)
 
         flat_indices = []
         flat_weights = []
         for i in range(max_seq_length - 1):
-            indices_subset = np.concatenate((split_indices[0][:-(i+1), np.newaxis], split_indices[1][i+1:, np.newaxis]), 1)
+            indices_subset = np.concatenate(
+                (
+                    split_indices[0][:-(i + 1), np.newaxis],
+                    split_indices[1][i + 1:, np.newaxis]
+                ),
+                1
+            )
             weights_subset = tf.fill([len(indices_subset)], weights[i])
             flat_indices.append(indices_subset)
             flat_weights.append(weights_subset)
         flat_indices = np.concatenate(flat_indices)
         flat_weights = tf.concat(flat_weights, 0)
 
-        mat = tf.sparse_to_dense(flat_indices, [max_seq_length, max_seq_length], flat_weights, validate_indices=False, name=scope)
+        mat = tf.sparse_to_dense(flat_indices, [max_seq_length, max_seq_length], flat_weights, validate_indices=False,
+                                 name=scope)
 
         return mat
+
 
 def id_filter(ids, filter_string, delimiter='#', name=None):
     """ Returns a boolean mask corresponding to the chosen id filter from a list of ids """
 
     with tf.name_scope(name, 'id_filter', [ids, filter_string]) as scope:
-        ids           = tf.convert_to_tensor(ids,           name='ids')
+        ids = tf.convert_to_tensor(ids, name='ids')
         filter_string = tf.convert_to_tensor(filter_string, name='filter_string')
 
-        return tf.equal(tf.string_split(ids, delimiter=delimiter).values[0::2], filter_string, name=scope)
+        return tf.equal(
+            tf.string_split(ids, delimiter=delimiter).values[0::2],
+            filter_string,
+            name=scope
+        )
