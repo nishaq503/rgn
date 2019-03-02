@@ -44,24 +44,28 @@ class DeadGradientError(RuntimeError):
 # logging functions
 def evaluate_and_log(log_file, configs, models, session):
     # evaluation of weighted losses
-    wt_train_loss_dict = models['eval_wt_train'].evaluate(session)\
-        if configs['run'].evaluation['include_weighted_training']\
+    wt_train_loss_dict = models['eval_wt_train'].evaluate(session) \
+        if configs['run'].evaluation['include_weighted_training'] \
         else {}
 
-    wt_val_loss_dict = models['eval_wt_val'].evaluate(session)\
-        if configs['run'].evaluation['include_weighted_validation']\
+    wt_val_loss_dict = models['eval_wt_val'].evaluate(session) \
+        if configs['run'].evaluation['include_weighted_validation'] \
         else {}
 
-    wt_test_loss_dict = models['eval_wt_test'].evaluate(session)\
-        if configs['run'].evaluation['include_weighted_testing']\
+    wt_test_loss_dict = models['eval_wt_test'].evaluate(session) \
+        if configs['run'].evaluation['include_weighted_testing'] \
         else {}
 
     # diagnostics
     if configs['run'].evaluation['include_diagnostics']:
         diagnostics = models['training'].diagnose(session)
     else:
-        diagnostics = {k: float('nan') for k in ('min_weight', 'max_weight', 'min_grad', 'max_grad',
-                                                 'curriculum_step', 'curriculum_quantiles')}
+        diagnostics = {k: float('nan') for k in ('min_weight',
+                                                 'max_weight',
+                                                 'min_grad',
+                                                 'max_grad',
+                                                 'curriculum_step',
+                                                 'curriculum_quantiles')}
 
     # Retrieve the correct loss.
     for loss_key in ['tertiary_loss_all']:
@@ -97,13 +101,11 @@ def evaluate_and_log(log_file, configs, models, session):
                 + 'Validation: {2:.3f}\tTest: {3:.3f}\t'
                 + 'Weight: {min_weight:.4e} {max_weight:.4e}\t'
                 + 'Update: {min_grad:.4e} {max_grad:.4e}'
-                + wt_val_loss_subgroups_string).format(
-        global_step,
-        wt_train_loss,
-        wt_val_loss['tertiary_loss_all'],
-        wt_test_loss,
-        **merge_dicts(diagnostics, wt_val_loss)
-    )
+                + wt_val_loss_subgroups_string).format(global_step,
+                                                       wt_train_loss,
+                                                       wt_val_loss['tertiary_loss_all'],
+                                                       wt_test_loss,
+                                                       **merge_dicts(diagnostics, wt_val_loss))
 
     # Additional diagnostics and losses if there's a curriculum.
     if configs['training'].curriculum['mode'] is not None:
@@ -167,10 +169,15 @@ def evaluate_and_log(log_file, configs, models, session):
             np.savetxt(f, diagnostics['alphabet'], footer='\n')
 
     # prep return 'package'
-    diagnostics.update({'wt_train_loss': wt_train_loss, 'wt_val_loss': wt_val_loss, 'wt_test_loss': wt_test_loss})
+    diagnostics.update({'wt_train_loss': wt_train_loss,
+                        'wt_val_loss': wt_val_loss,
+                        'wt_test_loss': wt_test_loss})
+
     if configs['training'].curriculum['mode'] is not None:
-        diagnostics.update(
-            {'unwt_train_loss': unwt_train_loss, 'unwt_val_loss': unwt_val_loss, 'unwt_test_loss': unwt_test_loss})
+        # noinspection PyUnboundLocalVariable
+        diagnostics.update({'unwt_train_loss': unwt_train_loss,
+                            'unwt_val_loss': unwt_val_loss,
+                            'unwt_test_loss': unwt_test_loss})
 
     return diagnostics
 
@@ -183,7 +190,7 @@ def predict_and_log(log_dir, configs, models, session):
         if 'eval' in label:
             generate = True
 
-            for case in switch(label):
+            for case in Switch(label):
                 if case('eval_' + val_ref_set_prefix + 'wt_train'):
                     outputs_dir = os.path.join(log_dir, TRAINING_OUTPUTS_DIRNAME)
                 elif case('eval_' + val_ref_set_prefix + 'wt_val'):
@@ -194,21 +201,24 @@ def predict_and_log(log_dir, configs, models, session):
                     generate = False
 
             if generate:
-                if not os.path.exists(outputs_dir): os.makedirs(outputs_dir)
+                # noinspection PyUnboundLocalVariable
+                if not os.path.exists(outputs_dir):
+                    os.makedirs(outputs_dir)
 
                 for _ in range(configs[label].queueing['num_evaluation_invocations']):
                     dicts = model.predict(session)
                     for idx, dict_ in dicts.iteritems():
                         if 'tertiary' in dict_:
-                            np.savetxt(os.path.join(outputs_dir, idx + '.tertiary'), dict_['tertiary'], header='\n')
+                            np.savetxt(os.path.join(outputs_dir, idx + '.tertiary'),
+                                       dict_['tertiary'], header='\n')
                         if 'recurrent_states' in dict_:
-                            np.savetxt(os.path.join(outputs_dir, idx + '.recurrent_states'), dict_['recurrent_states'])
+                            np.savetxt(os.path.join(outputs_dir, idx + '.recurrent_states'),
+                                       dict_['recurrent_states'])
 
 
 def loop(args_):
     # create config and model collection objects, and retrieve the run config
     configs = {}
-    models = {}
     configs.update({'run': RunConfig(args_.config_file)})
 
     # set GPU-related environmental options and config settings
@@ -222,8 +232,8 @@ def loop(args_):
     checkpoints_dir = os.path.join(run_dir, CHECKPOINTS_DIRNAME, '')
     logs_dir = os.path.join(run_dir, LOGS_DIRNAME, '')
     stdout_err_file = os.path.join(base_dir, LOGS_DIRNAME, configs['run'].names['run'] + '.log')
-    alphabet_file = os.path.join(data_dir, ALPHABETS_DIRNAME, configs['run'].names['alphabet'] + '.csv') if \
-    configs['run'].names['alphabet'] is not None else None
+    alphabet_file = os.path.join(data_dir, ALPHABETS_DIRNAME, configs['run'].names['alphabet'] + '.csv') \
+        if configs['run'].names['alphabet'] is not None else None
 
     # this is all for evaluation models (including training, so training_batch_size is for evaluation)
     full_training_glob = os.path.join(data_dir, FULL_TRAINING_DIRNAME, configs['run'].io['full_training_glob'])
@@ -248,19 +258,21 @@ def loop(args_):
 
     # redirect stdout/err to file
     sys.stderr.flush()
-    if not os.path.exists(os.path.dirname(stdout_err_file)): os.makedirs(os.path.dirname(stdout_err_file))
+    if not os.path.exists(os.path.dirname(stdout_err_file)):
+        os.makedirs(os.path.dirname(stdout_err_file))
     stdout_err_file_handle = open(stdout_err_file, 'w')
     os.dup2(stdout_err_file_handle.fileno(), sys.stderr.fileno())
     sys.stdout = stdout_err_file_handle
 
     # select device placement taking into consideration the interaction between training and evaluation models
-    if configs['run'].computing['training_device'] == 'GPU' and configs['run'].computing['evaluation_device'] == 'GPU':
+    if configs['run'].computing['training_device'] == 'GPU' \
+            and configs['run'].computing['evaluation_device'] == 'GPU':
         fod_training = {'/cpu:0': ['point_to_coordinate']}
         fod_evaluation = {'/cpu:0': ['point_to_coordinate']}
         dd_training = ''
         dd_evaluation = ''
-    elif configs['run'].computing['training_device'] == 'GPU' and configs['run'].computing[
-        'evaluation_device'] == 'CPU':
+    elif configs['run'].computing['training_device'] == 'GPU' \
+            and configs['run'].computing['evaluation_device'] == 'CPU':
         fod_training = {'/cpu:0': ['point_to_coordinate', 'loss_history']}
         fod_evaluation = {}
         dd_training = ''
@@ -308,7 +320,8 @@ def loop(args_):
                                              'numEpochs': eval_num_epochs,
                                              'bucketBoundaries': None})})
 
-    # Override included evaluation models with list from command-line if specified (assumes none are included and then includes ones that are specified)
+    # Override included evaluation models with list from command-line if specified
+    # (assumes none are included and then includes ones that are specified)
     if args_.evaluation_model:
         for prefix in ['', 'un']:
             for group in ['training', 'validation', 'testing']:
@@ -317,24 +330,25 @@ def loop(args_):
             configs['run'].evaluation.update({'include_' + entry: True})
 
     # Override other command-lind arguments
-    if args_.gpu_fraction: configs['training'].computing.update({'gpu_fraction': args_.gpu_fraction})
-    if args_.milestone: configs['run'].optimization.update({'validation_milestone': dict(args_.milestone)})
+    if args_.gpu_fraction:
+        configs['training'].computing.update({'gpu_fraction': args_.gpu_fraction})
+    if args_.milestone:
+        configs['run'].optimization.update({'validation_milestone': dict(args_.milestone)})
 
     # Ensure that correct validation reference is chosen if not predicting, and turn off evaluation loss if predicting
     if not args_.prediction_only:
-        if ((not configs['run'].evaluation['include_weighted_validation']) and configs['run'].optimization[
-            'validation_reference'] == 'weighted') or \
-                ((not configs['run'].evaluation['include_unweighted_validation']) and configs['run'].optimization[
-                    'validation_reference'] == 'unweighted'):
+        if ((not configs['run'].evaluation['include_weighted_validation'])
+            and configs['run'].optimization['validation_reference'] == 'weighted') \
+                or ((not configs['run'].evaluation['include_unweighted_validation'])
+                    and configs['run'].optimization['validation_reference'] == 'unweighted'):
             raise RuntimeError('Chosen validation reference is not included in run.')
     else:
         configs['evaluation'].loss['include'] = False
 
     # rescaling needed to adjust for how frequently loss_history is updated
-    if configs['training'].curriculum['behavior'] == 'loss_change':
-        configs['training'].curriculum['change_num_iterations'] //= configs['run'].io[
-            'evaluation_frequency']  # result must be >=1
-        configs['evaluation'].curriculum['change_num_iterations'] //= configs['run'].io['evaluation_frequency']  # ditto
+    if configs['training'].curriculum['behavior'] == 'loss_change':  # result must be >=1
+        configs['training'].curriculum['change_num_iterations'] //= configs['run'].io['evaluation_frequency']
+        configs['evaluation'].curriculum['change_num_iterations'] //= configs['run'].io['evaluation_frequency']
 
     # create training model
     models = {}
@@ -433,15 +447,17 @@ def loop(args_):
             print('Unexpected error: ', sys.exc_info()[0])
             raise
         finally:
-            if models['training']._is_started: models['training'].finish(session, save=False)
+            if models['training'].is_started:
+                models['training'].finish(session, save=False)
             stdout_err_file_handle.close()
     else:
         # clean up post last checkpoint residue if any
         if global_step != 0:
             # remove future directories
-            last_log_step = \
-            sorted([int(os.path.basename(os.path.normpath(dir))) for dir in glob(os.path.join(run_dir, '*[0-9]'))])[-1]
-            for step in range(current_log_step + 1, last_log_step + 1): rmtree(os.path.join(run_dir, str(step)))
+            last_log_step = sorted([int(os.path.basename(os.path.normpath(_dir)))
+                                    for _dir in glob(os.path.join(run_dir, '*[0-9]'))])[-1]
+            for step in range(current_log_step + 1, last_log_step + 1):
+                rmtree(os.path.join(run_dir, str(step)))
 
             # remove future log entries in current log files
             log_file = os.path.join(log_dir, 'error.log')
@@ -454,7 +470,7 @@ def loop(args_):
                             if step == global_step:
                                 f.truncate()
                                 break
-                        else:  # reached end without seeing global_step, means checkpoint is ahead of last recorded log entry
+                        else:  # reached end without seeing global_step, checkpoint is ahead of last recorded log entry
                             break
 
         # training loop
@@ -466,30 +482,35 @@ def loop(args_):
                 # Set and create logging directory and files if needed
                 log_dir = os.path.join(run_dir, str((global_step // configs['run'].io['prediction_frequency']) + 1))
                 log_file = os.path.join(log_dir, 'error.log')
-                if not os.path.exists(log_dir): os.makedirs(log_dir)
+                if not os.path.exists(log_dir):
+                    os.makedirs(log_dir)
 
                 # Evaluate error, get diagnostics, and raise exceptions if necessary
                 if global_step % configs['run'].io['evaluation_frequency'] == 0:
                     diagnostics = evaluate_and_log(log_file, configs, models, session)
 
                     # restart if a milestone is missed
-                    val_ref_set_prefix = 'un' if configs['run'].optimization[
-                                                     'validation_reference'] == 'unweighted' else ''
-                    min_loss_achieved = diagnostics[val_ref_set_prefix + 'wt_val_loss'][
-                        'min_tertiary_loss_achieved_all']
+                    val_ref_set_prefix = 'un'\
+                        if configs['run'].optimization['validation_reference'] == 'unweighted'\
+                        else ''
+                    min_loss_achieved = diagnostics[val_ref_set_prefix + 'wt_val_loss']['min_tertiary_loss_achieved_all']
                     for step, loss in configs['run'].optimization['validation_milestone'].iteritems():
                         if global_step >= step and min_loss_achieved > loss:
-                            raise MilestoneError('Milestone at step ' + str(global_step) + \
-                                                 ' missed because minimum loss achieved so far is ' + str(
-                                min_loss_achieved))
+                            raise MilestoneError('Milestone at step '
+                                                 + str(global_step)
+                                                 + ' missed because minimum loss achieved so far is '
+                                                 + str(min_loss_achieved))
 
                     # restart if gradients are zero
-                    if (diagnostics['min_grad'] == 0 and diagnostics['max_grad'] == 0) or \
-                            (configs['run'].evaluation['include_diagnostics'] and (
-                                    np.isnan(diagnostics['min_grad']) or np.isnan(diagnostics['max_grad']))):
+                    if (diagnostics['min_grad'] == 0 and diagnostics['max_grad'] == 0)\
+                        or (configs['run'].evaluation['include_diagnostics']
+                            and (np.isnan(diagnostics['min_grad'])
+                                 or np.isnan(diagnostics['max_grad']))):
                         raise DeadGradientError('Gradient is dead.')
 
-                # Predict structures. Currently assumes that weighted training and validation models are available, and fails if they're not.
+                # Predict structures.
+                # Currently assumes that weighted training and validation models are available,
+                # and fails if they're not.
                 if global_step % configs['run'].io['prediction_frequency'] == 0:
                     predict_and_log(log_dir, configs, models, session)
 
@@ -500,16 +521,17 @@ def loop(args_):
         except tf.errors.OutOfRangeError:
             print('Epoch limit reached.')
 
-        except (
-        tf.errors.InvalidArgumentError, DeadGradientError):  # InvalidArgumentError is usually triggered by a nan
+        except (tf.errors.InvalidArgumentError,
+                DeadGradientError):  # InvalidArgumentError is usually triggered by a nan
             models['training'].finish(session, save=False)
 
             if args_.restart_on_dead_gradient:
-                print(
-                    'Nan or dead gradient encountered; model will be resumed from last checkpoint if one exists, or restarted from scratch otherwise.')
-                if not os.path.isdir(checkpoints_dir):
-                    for sub_dir in next(os.walk(run_dir))[1]: rmtree(
-                        os.path.join(run_dir, sub_dir))  # erase all old directories
+                print('Nan or dead gradient encountered;'
+                      ' model will be resumed from last checkpoint if one exists,'
+                      ' or restarted from scratch otherwise.')
+                if not os.path.isdir(checkpoints_dir):  # erase all old directories
+                    for sub_dir in next(os.walk(run_dir))[1]:
+                        rmtree(os.path.join(run_dir, sub_dir))
                 restart = True
             else:
                 print('Nan or dead gradient encountered; model will be terminated.')
@@ -520,8 +542,8 @@ def loop(args_):
             if args_.restart_on_missed_milestone:
                 print('Milestone missed; model will be restarted from scratch with an incremented seed.')
 
-                for sub_dir in next(os.walk(run_dir))[1]: rmtree(
-                    os.path.join(run_dir, sub_dir))  # erase all old directories
+                for sub_dir in next(os.walk(run_dir))[1]:  # erase all old directories
+                    rmtree(os.path.join(run_dir, sub_dir))
 
                 # modify configuration file with new seed
                 old_seed = configs['training'].initialization['graph_seed']
@@ -537,9 +559,9 @@ def loop(args_):
             print('Unexpected error: ', sys.exc_info()[0])
             raise
 
-        finally:
-            # Wrap up (ask threads to stop, save final checkpoint, etc.)
-            if models['training']._is_started: models['training'].finish(session, save=args_.checkpoint_on_finish)
+        finally:  # Wrap up (ask threads to stop, save final checkpoint, etc.)
+            if models['training'].is_started:
+                models['training'].finish(session, save=args_.checkpoint_on_finish)
             stdout_err_file_handle.close()
 
     return restart

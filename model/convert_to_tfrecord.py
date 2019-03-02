@@ -4,7 +4,7 @@ import sys
 
 import tensorflow as tf
 
-from utils import switch
+from utils import Switch
 
 # Constants
 NUM_DIMENSIONS = 3
@@ -43,7 +43,7 @@ def read_record(file_, num_entries):
 
     while True:
         next_line = file_.readline()
-        for case in switch(next_line):
+        for case in Switch(next_line):
             if case('[ID]' + '\n'):
                 id_ = file_.readline()[:-1]
                 _dict_.update({'id': id_})

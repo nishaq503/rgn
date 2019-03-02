@@ -39,14 +39,14 @@ class RGNModel(object):
     """Recurrent geometric network model"""
 
     # static variable to control creation of new objects and starting the model
-    _is_started = False
+    is_started = False
     _num_models = 0
 
     def __init__(self, mode, config):
         """ Sets up type of instance object and invokes TF graph creation function. """
 
         # make sure model hasn't been started, otherwise bail.
-        if not RGNModel._is_started:
+        if not RGNModel.is_started:
             # instance variables
             self.mode = mode
             self.config = deepcopy(config)
@@ -311,7 +311,7 @@ class RGNModel(object):
 
     def _evaluate(self, session, pretty=True):
         """ Evaluates loss(es) and returns dicts with the relevant loss(es). """
-        if RGNModel._is_started:
+        if RGNModel.is_started:
             # evaluate
             num_invocations = self.config.queueing['num_evaluation_invocations']
             for invocation in range(num_invocations):
@@ -336,7 +336,7 @@ class RGNModel(object):
     def _predict(self, session):
         """ Predict 3D structures. """
 
-        if RGNModel._is_started:
+        if RGNModel.is_started:
             # evaluate prediction dict
             prediction_dict = ops_to_dict(session, self._prediction_ops)
 
@@ -403,7 +403,7 @@ class RGNModel(object):
         """ Initializes model from scratch or loads state from disk.
             Must be run once (and only once) before model is used. """
 
-        if not RGNModel._is_started:
+        if not RGNModel.is_started:
             # Checkpointing. Must be done here after all models have been instantiated, because evaluation models may introduce additional variables
             self._saver = tf.train.Saver(max_to_keep=self.config.io['max_checkpoints'],
                                          keep_checkpoint_every_n_hours=self.config.io['checkpoint_every_n_hours'])
@@ -476,7 +476,7 @@ class RGNModel(object):
 
             # start coordinator and queueing threads
             self._threads = tf.train.start_queue_runners(sess=session, coord=self._coordinator)
-            RGNModel._is_started = True
+            RGNModel.is_started = True
 
             # expose new methods and hide old ones
             self.train = self._train
@@ -521,7 +521,7 @@ class RGNModel(object):
         if reset_graph: tf.reset_default_graph()
 
         RGNModel._num_models = 0
-        RGNModel._is_started = False
+        RGNModel.is_started = False
 
         del self.train, self.diagnose, self.save, self.is_done, self.current_step, self.finish
 
@@ -788,7 +788,7 @@ def _recurrence(mode, config, inputs, num_stepss):
     if config['recurrent_init'] != None:
         recurrent_init = dict_to_inits(config['recurrent_init'], config['recurrent_seed'])
     else:
-        for case in switch(config['recurrent_unit']):
+        for case in Switch(config['recurrent_unit']):
             if case('LNLSTM'):
                 recurrent_init = {'base': None, 'bias': None}
             elif case('CudnnLSTM') or case('CudnnGRU'):
@@ -804,7 +804,7 @@ def _recurrence(mode, config, inputs, num_stepss):
         num_layers = len(config['recurrent_layer_size'])
         input_keep_prob = config['recurrent_input_keep_probability'][0]
 
-        for case in switch(config['recurrent_unit']):
+        for case in Switch(config['recurrent_unit']):
             if case('CudnnLSTM'):
                 cell = cudnn_rnn.CudnnLSTM
             elif case('CudnnGRU'):
@@ -885,7 +885,7 @@ def _recurrent_cell(mode, config, recurrent_init, name=''):
                                initializer=recurrent_init['base']):
 
             # create core cell
-            for case in switch(config['recurrent_unit']):
+            for case in Switch(config['recurrent_unit']):
                 if case('Basic'):
                     cell = tf.nn.rnn_cell.BasicRNNCell(num_units=layer_size, reuse=(not is_training))
                 elif case('GRU'):
@@ -1111,7 +1111,7 @@ def _reduce_loss_quotient(config, losses, masks, group_filter, name_prefix=''):
 
     losses_filtered = tf.boolean_mask(losses, group_filter)  # will give problematic results if all entries are removed
 
-    for case in switch(normalization):
+    for case in Switch(normalization):
         if case('zeroth'):
             loss_factors = tf.ones_like(losses_filtered)
         elif case('first'):
@@ -1197,7 +1197,7 @@ def _training(config, loss):
     threshold = config['gradient_threshold']
 
     if threshold != float('inf'):
-        for case in switch(config['rescale_behavior']):
+        for case in Switch(config['rescale_behavior']):
             if case('norm_rescaling'):
                 grads, _ = tf.clip_by_global_norm([g for g, _ in grads_and_vars], threshold)
                 vars_ = [v for _, v in grads_and_vars]
@@ -1234,7 +1234,7 @@ def _curriculum(config, step, loss_history, dependency_ops):
     """ Creates TF ops for maintaining and advancing the curriculum. """
 
     # assign appropriate curriculum increment value
-    for case in switch(config['behavior']):
+    for case in Switch(config['behavior']):
         if case('fixed_rate'):
             # fixed rate, always return same number
             increment = tf.constant(config['rate'], name='curriculum_increment')
