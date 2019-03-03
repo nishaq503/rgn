@@ -1,22 +1,23 @@
-""" Geometric TensorFlow operations for protein structure prediction.
+"""
+Geometric TensorFlow operations for protein structure prediction.
 
-    There are some common conventions used throughout.
+There are some common conventions used throughout.
 
-    BATCH_SIZE is the size of the batch, and may vary from iteration to iteration.
-    NUM_STEPS is the length of the longest sequence in the data set (not batch).
-            It is fixed as part of the tf graph.
-    NUM_DIHEDRALS is the number of dihedral angles per residue (phi, psi, omega).
-            It is always 3.
-    NUM_DIMENSIONS is a constant of nature, the number of physical spatial dimensions.
-            It is always 3.
+BATCH_SIZE is the size of the batch, and may vary from iteration to iteration.
+NUM_STEPS is the length of the longest sequence in the data set (not batch).
+        It is fixed as part of the tf graph.
+NUM_DIHEDRALS is the number of dihedral angles per residue (phi, psi, omega).
+        It is always 3.
+NUM_DIMENSIONS is a constant of nature, the number of physical spatial dimensions.
+        It is always 3.
 
-    In general, this is an implicit ordering of tensor dimensions that is respected throughout.
-    It is:
-        NUM_STEPS, BATCH_SIZE, NUM_DIHEDRALS, NUM_DIMENSIONS
+In general, this is an implicit ordering of tensor dimensions that is respected throughout.
+It is:
+    NUM_STEPS, BATCH_SIZE, NUM_DIHEDRALS, NUM_DIMENSIONS
 
-    The only exception is when NUM_DIHEDRALS are fused into NUM_STEPS.
-    Btw what is setting the standard is the builtin interface of tensorflow.models.rnn.rnn,
-     which expects NUM_STEPS x [BATCH_SIZE, NUM_AAS].
+The only exception is when NUM_DIHEDRALS are fused into NUM_STEPS.
+Btw what is setting the standard is the builtin interface of tensorflow.models.rnn.rnn,
+ which expects NUM_STEPS x [BATCH_SIZE, NUM_AAS].
 """
 
 __author__ = "Mohammed AlQuraishi"
@@ -164,7 +165,7 @@ def dihedral_to_point(dihedral,
     """
     Takes triplets of dihedral angles (phi, psi, omega)
      and returns 3D points ready for use in reconstruction of coordinates.
-      Bond lengths and angles are based on idealized averages.
+    Bond lengths and angles are based on idealized averages.
 
     Args:
         dihedral: [NUM_STEPS, BATCH_SIZE, NUM_DIHEDRALS]
@@ -178,29 +179,35 @@ def dihedral_to_point(dihedral,
         dihedral = tf.convert_to_tensor(dihedral, name='dihedral')
 
         num_steps = tf.shape(dihedral)[0]
+
         # important to use get_shape() to keep batch_size fixed for performance reasons
         batch_size = dihedral.get_shape().as_list()[1]
 
-        r_cos_theta = tf.constant(r * np.cos(np.pi - theta), name='r_cos_theta')  # [NUM_DIHEDRALS]
-        r_sin_theta = tf.constant(r * np.sin(np.pi - theta), name='r_sin_theta')  # [NUM_DIHEDRALS]
+        # [NUM_DIHEDRALS]
+        r_cos_theta = tf.constant(r * np.cos(np.pi - theta), name='r_cos_theta')
+        # [NUM_DIHEDRALS]
+        r_sin_theta = tf.constant(r * np.sin(np.pi - theta), name='r_sin_theta')
 
-        pt_x = tf.tile(
-            tf.reshape(r_cos_theta, [1, 1, -1]),
-            [num_steps, batch_size, 1],
-            name='pt_x')  # [NUM_STEPS, BATCH_SIZE, NUM_DIHEDRALS]
-        pt_y = tf.multiply(
-            tf.cos(dihedral),
-            r_sin_theta,
-            name='pt_y')  # [NUM_STEPS, BATCH_SIZE, NUM_DIHEDRALS]
-        pt_z = tf.multiply(
-            tf.sin(dihedral),
-            r_sin_theta,
-            name='pt_z')  # [NUM_STEPS, BATCH_SIZE, NUM_DIHEDRALS]
+        # [NUM_STEPS, BATCH_SIZE, NUM_DIHEDRALS]
+        pt_x = tf.tile(tf.reshape(r_cos_theta, [1, 1, -1]),
+                       [num_steps, batch_size, 1],
+                       name='pt_x')
+        # [NUM_STEPS, BATCH_SIZE, NUM_DIHEDRALS]
+        pt_y = tf.multiply(tf.cos(dihedral),
+                           r_sin_theta,
+                           name='pt_y')
+        # [NUM_STEPS, BATCH_SIZE, NUM_DIHEDRALS]
+        pt_z = tf.multiply(tf.sin(dihedral),
+                           r_sin_theta,
+                           name='pt_z')
 
-        pt = tf.stack([pt_x, pt_y, pt_z])  # [NUM_DIMS, NUM_STEPS, BATCH_SIZE, NUM_DIHEDRALS]
-        pt_perm = tf.transpose(pt, perm=[1, 3, 2, 0])  # [NUM_STEPS, NUM_DIHEDRALS, BATCH_SIZE, NUM_DIMS]
-        pt_final = tf.reshape(pt_perm, [num_steps * NUM_DIHEDRALS, batch_size, NUM_DIMENSIONS],
-                              # [NUM_STEPS x NUM_DIHEDRALS, BATCH_SIZE, NUM_DIMS]
+        # [NUM_DIMS, NUM_STEPS, BATCH_SIZE, NUM_DIHEDRALS]
+        pt = tf.stack([pt_x, pt_y, pt_z])
+        # [NUM_STEPS, NUM_DIHEDRALS, BATCH_SIZE, NUM_DIMS]
+        pt_perm = tf.transpose(pt, perm=[1, 3, 2, 0])
+        # [NUM_STEPS x NUM_DIHEDRALS, BATCH_SIZE, NUM_DIMS]
+        pt_final = tf.reshape(pt_perm,
+                              [num_steps * NUM_DIHEDRALS, batch_size, NUM_DIMENSIONS],
                               name=scope)
 
         return pt_final
@@ -215,11 +222,11 @@ def point_to_coordinate(pt,
     Takes points from dihedral_to_point and sequentially converts
      them into the coordinates of a 3D structure.
 
-    Reconstruction is done in parallel, by independently reconstructing
-     num_fragments fragments and then reconstituting the chain at the end
-      in reverse order. The core reconstruction algorithm is NeRF, based on
-      DOI: 10.1002/jcc.20237 by Parsons et al. 2005.
-      The parallelized version is described in XXX.
+    Reconstruction is done in parallel, by independently reconstructing num_fragments
+     fragments and then reconstituting the chain at the end in reverse order.
+    The core reconstruction algorithm is NeRF,
+     based on DOI: 10.1002/jcc.20237 by Parsons et al. 2005.
+    The parallelized version is described in XXX.
 
     Args:
         pt: [NUM_STEPS x NUM_DIHEDRALS, BATCH_SIZE, NUM_DIMENSIONS]
