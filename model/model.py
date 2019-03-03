@@ -1,11 +1,11 @@
-""" Recurrent geometric network model for protein structure prediction.
+"""
+Recurrent geometric network model for protein structure prediction.
 
-    In general, there is an implicit ordering of tensor dimensions that is respected throughout. It is:
+In general, there is an implicit ordering of tensor dimensions that is respected throughout. It is:
 
-        NUM_STEPS, BATCH_SIZE, NUM_DIHEDRALS, NUM_DIMENSIONS
+    NUM_STEPS, BATCH_SIZE, NUM_DIHEDRALS, NUM_DIMENSIONS
 
-    All tensors are assumed to have this orientation unless otherwise labeled.
-
+All tensors are assumed to have this orientation unless otherwise labeled.
 """
 
 __author__ = "Mohammed AlQuraishi"
@@ -36,14 +36,18 @@ LOSS_SCALING_FACTOR = 0.01  # this is to convert recorded losses to angstroms
 
 
 class RGNModel(object):
-    """Recurrent geometric network model"""
+    """
+    Recurrent geometric network model
+    """
 
     # static variable to control creation of new objects and starting the model
     is_started = False
     _num_models = 0
 
     def __init__(self, mode, config):
-        """ Sets up type of instance object and invokes TF graph creation function. """
+        """
+        Sets up type of instance object and invokes TF graph creation function.
+        """
 
         # make sure model hasn't been started, otherwise bail.
         if not RGNModel.is_started:
@@ -78,12 +82,12 @@ class RGNModel(object):
                 RGNModel._num_models = RGNModel._num_models + 1
 
             # alphabet-related
-            arch['alphabet'] = np.loadtxt(io['alphabet_file'], delimiter=',')[:, 6:] if io[
-                                                                                            'alphabet_file'] is not None else None
-            if arch['alphabet'] is not None: arch['alphabet_size'] = len(
-                arch['alphabet'])  # set alphabet size if implicit
-            arch['single_or_no_alphabet'] = type(
-                arch['alphabet_size']) is not list  # having multiple alphabets is isomorphic to not reusing alphabet
+            arch['alphabet'] = np.loadtxt(io['alphabet_file'], delimiter=',')[:, 6:] if io['alphabet_file'] is not None else None
+            if arch['alphabet'] is not None:
+                arch['alphabet_size'] = len(arch['alphabet'])  # set alphabet size if implicit
+
+            # having multiple alphabets is isomorphic to not reusing alphabet
+            arch['single_or_no_alphabet'] = type(arch['alphabet_size']) is not list
             arch['is_alphabetized'] = 'alphabet' in arch['tertiary_output']
 
             # angularization
@@ -96,12 +100,13 @@ class RGNModel(object):
             # initialization
             if arch['higher_order_layers']:
                 for key in ['recurrent_init']:
-                    if type(init[key]) is not list: init[key] = [init[key]] * len(arch['recurrent_layer_size'])
+                    if type(init[key]) is not list:
+                        init[key] = [init[key]] * len(arch['recurrent_layer_size'])
 
             if arch['recurrent_nonlinear_out_proj_size'] is not None:
                 for key in ['recurrent_nonlinear_out_proj_init']:
-                    if type(init[key]) is not list: init[key] = [init[key]] * len(
-                        arch['recurrent_nonlinear_out_proj_size'])
+                    if type(init[key]) is not list:
+                        init[key] = [init[key]] * len(arch['recurrent_nonlinear_out_proj_size'])
 
             # regularization
             for key in ['recurrent_input_keep_probability',
@@ -111,7 +116,8 @@ class RGNModel(object):
                         'recurrent_memory_zonein_probability',
                         'alphabet_keep_probability',
                         'alphabet_normalization']:
-                if type(reg[key]) is not list: reg[key] = [reg[key]] * len(arch['recurrent_layer_size'])
+                if type(reg[key]) is not list:
+                    reg[key] = [reg[key]] * len(arch['recurrent_layer_size'])
 
             # create graph
             self._create_graph(mode, self.config)
@@ -120,32 +126,33 @@ class RGNModel(object):
             raise RuntimeError('Model already started; cannot create new objects.')
 
     def _create_graph(self, mode, config):
-        """ Creates TensorFlow computation graph 
+        """
+        Creates TensorFlow computation graph
 
-            Creates a different model depending on whether mode is set to 'training' or 'evaluation'.
-            The semantics are such that the head (default 'training' mode) model is the one
-            required for starting, training, and checkpointing. Additionally the user may create any 
-            number of 'evaluation' models that depend on the head model, but supplement it with 
-            additional data sets (and different model semantics (e.g. no dropout)) for the evaluation 
-            and logging of their performance. However a head model is always required, and it is the 
-            only one that exposes the core methods for starting and training.
+        Creates a different model depending on whether mode is set to 'training' or 'evaluation'.
+        The semantics are such that the head (default 'training' mode) model is the one
+        required for starting, training, and checkpointing. Additionally the user may create any
+        number of 'evaluation' models that depend on the head model, but supplement it with
+        additional data sets (and different model semantics (e.g. no dropout)) for the evaluation
+        and logging of their performance. However a head model is always required, and it is the
+        only one that exposes the core methods for starting and training.
 
-            Note that the head model creates all variables, even ones it doesn't use, because it is 
-            the one with the reuse=None semantics. Ops however are specific to each model type and
-            so some ops are missing from the training model and vice-versa.
+        Note that the head model creates all variables, even ones it doesn't use, because it is
+        the one with the reuse=None semantics. Ops however are specific to each model type and
+        so some ops are missing from the training model and vice-versa.
 
-            Almost all graph construction is done in this function, which relies on a number of 
-            private methods to do the actual construction. Methods internal to this class are ad hoc 
-            and thus not meant for general use--general methods are placed in separate *_ops python 
-            modules. Some parts of graph construction, namely summary ops, are done in the start 
-            method, to ensure that all models have been created.
+        Almost all graph construction is done in this function, which relies on a number of
+        private methods to do the actual construction. Methods internal to this class are ad hoc
+        and thus not meant for general use--general methods are placed in separate *_ops python
+        modules. Some parts of graph construction, namely summary ops, are done in the start
+        method, to ensure that all models have been created.
 
-            There are two types of internal (private, prefaced with _) variables stored in each
-            object. One are ops collections, like training_ops, evaluation_ops, etc. These are lists 
-            of ops that are run when the similarly named object method is called. As the graph is 
-            built up, ops are added to these lists. The second type of variables are various nodes
-            that are like TF methods, e.g. the initializer, saver, etc, which are stored in the
-            object and are accessed by various methods when necessary.
+        There are two types of internal (private, prefaced with _) variables stored in each
+        object. One are ops collections, like training_ops, evaluation_ops, etc. These are lists
+        of ops that are run when the similarly named object method is called. As the graph is
+        built up, ops are added to these lists. The second type of variables are various nodes
+        that are like TF methods, e.g. the initializer, saver, etc, which are stored in the
+        object and are accessed by various methods when necessary.
         """
 
         # set up appropriate op collections based on mode (for initial state)
@@ -158,46 +165,56 @@ class RGNModel(object):
             self._prediction_ops = prediction_ops = {}  # collection of ops for prediction of structures
 
         # set variable scoping, op scoping, and place on appropriate device
-        with tf.variable_scope(SCOPE, reuse=(mode == 'evaluation')) as scope, \
-                tf.name_scope(SCOPE + '/' + config.io['name'] + '/'), \
-                tf.device(_device_function_constructor(
-                    **{k: config.computing[k] for k in ('functions_on_devices', 'default_device')})):
+        # noinspection PyUnusedLocal
+        with tf.variable_scope(SCOPE, reuse=(mode == 'evaluation')) as scope,\
+                tf.name_scope(SCOPE + '/' + config.io['name'] + '/'),\
+                tf.device(_device_function_constructor(**{k: config.computing[k]
+                                                          for k in ('functions_on_devices',
+                                                                    'default_device')})):
 
             # set graph seed
-            if mode == 'training': tf.set_random_seed(config.initialization['graph_seed'])
+            if mode == 'training':
+                tf.set_random_seed(config.initialization['graph_seed'])
 
             # Create curriculum state and tracking variables if needed.
             if config.curriculum['mode'] is not None:
                 # Variable to hold current curriculum iteration
                 curriculum_step = tf.get_variable(name='curriculum_step', shape=[], trainable=False,
                                                   initializer=tf.constant_initializer(config.curriculum['base']))
-                if mode == 'training': diagnostic_ops.update({'curriculum_step': curriculum_step})
+                if mode == 'training':
+                    # noinspection PyUnboundLocalVariable
+                    diagnostic_ops.update({'curriculum_step': curriculum_step})
 
             # Set up data ports
-            if mode == 'training': self._coordinator = tf.train.Coordinator()
+            if mode == 'training':
+                self._coordinator = tf.train.Coordinator()
             if config.curriculum['mode'] == 'length':
                 max_length = tf.cast(tf.reduce_min([curriculum_step, config.optimization['num_steps']]), tf.int32)
             else:
                 max_length = config.optimization['num_steps']
-            dataflow_config = merge_dicts(config.io, config.initialization, config.optimization, config.queueing)
-            ids, primaries, evolutionaries, secondaries, tertiaries, masks, num_stepss = _dataflow(dataflow_config,
-                                                                                                   max_length)
+
+            data_flow_config = merge_dicts(config.io, config.initialization, config.optimization, config.queueing)
+            ids, primaries, evolutionaries, secondaries, tertiaries, masks, num_steps = _dataflow(data_flow_config,
+                                                                                                  max_length)
 
             # Set up inputs
-            inputs = _inputs(merge_dicts(config.architecture, config.initialization), primaries, evolutionaries)
+            inputs = _inputs(merge_dicts(config.architecture, config.initialization),
+                             primaries,
+                             evolutionaries)
 
             # Compute dRMSD weights (this masks out meaningless (longer than sequence) pairwise distances and incorporates curriculum weights)
             weights_config = merge_dicts(config.optimization, config.curriculum, config.loss, config.io)
             weights, flat_curriculum_weights = _weights(weights_config, masks, curriculum_step if config.curriculum[
                                                                                                       'mode'] == 'loss' else None)
-            if mode == 'training' and config.curriculum['mode'] == 'loss': diagnostic_ops.update(
-                {'flat_curriculum_weights': flat_curriculum_weights})
+            if mode == 'training' and config.curriculum['mode'] == 'loss':
+                diagnostic_ops.update({'flat_curriculum_weights': flat_curriculum_weights})
 
             # create alphabet if needed and if it will be shared between layers, otherwise set to None so that _dihedrals takes care of it
             alphabet_config = merge_dicts(config.architecture, config.initialization)
             if alphabet_config['is_alphabetized'] and alphabet_config['single_or_no_alphabet']:
                 alphabet = _alphabet(mode, alphabet_config)
-                if mode == 'training' and config.io['log_alphabet']: diagnostic_ops.update({'alphabet': alphabet})
+                if mode == 'training' and config.io['log_alphabet']:
+                    diagnostic_ops.update({'alphabet': alphabet})
             else:
                 alphabet = None
 
@@ -205,7 +222,7 @@ class RGNModel(object):
             recurrence_config = merge_dicts(config.initialization, config.architecture, config.regularization,
                                             config.optimization,
                                             config.computing, config.io)
-            recurrent_outputs, recurrent_states = _higher_recurrence(mode, recurrence_config, inputs, num_stepss,
+            recurrent_outputs, recurrent_states = _higher_recurrence(mode, recurrence_config, inputs, num_steps,
                                                                      alphabet=alphabet)
 
             # Tertiary structure generation
@@ -215,8 +232,8 @@ class RGNModel(object):
                                                config.regularization, config.io)
                 dihedrals_config.update({k: dihedrals_config[k][-1] for k in ['alphabet_keep_probability',
                                                                               'alphabet_normalization']})
-                if not dihedrals_config['single_or_no_alphabet']: dihedrals_config.update(
-                    {'alphabet_size': dihedrals_config['alphabet_size'][-1]})
+                if not dihedrals_config['single_or_no_alphabet']:
+                    dihedrals_config.update({'alphabet_size': dihedrals_config['alphabet_size'][-1]})
                 dihedrals = _dihedrals(mode, dihedrals_config, recurrent_outputs, alphabet=alphabet)
 
                 # Convert dihedrals into full 3D structures and compute dRMSDs
@@ -226,7 +243,10 @@ class RGNModel(object):
                                  weights)
 
                 if mode == 'evaluation':
-                    prediction_ops.update({'ids': ids, 'coordinates': coordinates, 'num_stepss': num_stepss,
+                    # noinspection PyUnboundLocalVariable
+                    prediction_ops.update({'ids': ids,
+                                           'coordinates': coordinates,
+                                           'num_steps': num_steps,
                                            'recurrent_states': recurrent_states})
 
             # Losses
@@ -258,23 +278,28 @@ class RGNModel(object):
                                     name_prefix='tertiary_loss')
 
                                 if mode == 'evaluation':
+                                    # noinspection PyUnboundLocalVariable
                                     evaluation_ops.update({'update_accumulator_' + group_id + '_op': update_accu_op})
+                                    # noinspection PyUnboundLocalVariable
                                     last_evaluation_ops.update(
-                                        {'tertiary_loss_' + group_id: tertiary_loss * LOSS_SCALING_FACTOR, \
-                                         'reduce_accumulator_' + group_id + '_op': reduce_accu_op, \
-                                         'min_tertiary_loss_achieved_' + group_id: min_loss_achieved * LOSS_SCALING_FACTOR, \
+                                        {'tertiary_loss_' + group_id: tertiary_loss * LOSS_SCALING_FACTOR,
+                                         'reduce_accumulator_' + group_id + '_op': reduce_accu_op,
+                                         'min_tertiary_loss_achieved_' + group_id: min_loss_achieved * LOSS_SCALING_FACTOR,
                                          'min_tertiary_loss_' + group_id + '_op': min_loss_op})
 
-                            if config.io['log_model_summaries']: tf.add_to_collection(
-                                config.io['name'] + '_tertiary_losses', tertiary_loss)
+                            if config.io['log_model_summaries']:
+                                tf.add_to_collection(config.io['name'] + '_tertiary_losses', tertiary_loss)
                             effective_tertiary_loss = config.loss['tertiary_weight'] * tertiary_loss
 
                         # Final loss and related housekeeping
                         loss = tf.identity(effective_tertiary_loss, name='loss')
                         update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)  # batch_norm related
-                        if update_ops: loss = control_flow_ops.with_dependencies(tf.tuple(update_ops), loss)
-                        if config.io['log_model_summaries']: tf.add_to_collection(config.io['name'] + '_losses', loss)
-                        if group_id == config.curriculum['loss_history_subgroup']: curriculum_loss = loss
+                        if update_ops:
+                            loss = control_flow_ops.with_dependencies(tf.tuple(update_ops), loss)
+                        if config.io['log_model_summaries']:
+                            tf.add_to_collection(config.io['name'] + '_losses', loss)
+                        if group_id == config.curriculum['loss_history_subgroup']:
+                            curriculum_loss = loss
 
                 # Curriculum loss history; not always used but design is much cleaner if always created.
                 curriculum_loss_history = tf.get_variable(
@@ -293,6 +318,7 @@ class RGNModel(object):
                 # update relevant op dicts
                 # update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
                 # if update_ops: training_ops.update({'update_ops': tf.tuple(update_ops)})
+                # noinspection PyUnboundLocalVariable
                 training_ops.update({'minimize_op': minimize_op, 'global_step': self._global_step, 'ids': ids})
                 diagnostic_ops.update(grads_and_vars_dict)
 
@@ -303,14 +329,16 @@ class RGNModel(object):
                 training_ops.update({'curriculum_update_op': curriculum_update_op})
 
     def _train(self, session):
-        """ Performs one iteration of training and, if applicable, advances the curriculum. """
-
+        """
+        Performs one iteration of training and, if applicable, advances the curriculum.
+        """
         training_dict = ops_to_dict(session, self._training_ops)
-
         return training_dict['global_step'], training_dict['ids']
 
     def _evaluate(self, session, pretty=True):
-        """ Evaluates loss(es) and returns dicts with the relevant loss(es). """
+        """
+        Evaluates loss(es) and returns dicts with the relevant loss(es).
+        """
         if RGNModel.is_started:
             # evaluate
             num_invocations = self.config.queueing['num_evaluation_invocations']
@@ -318,15 +346,21 @@ class RGNModel(object):
                 if invocation < num_invocations - 1:
                     evaluation_dict = ops_to_dict(session, self._evaluation_ops)
                 else:
-                    evaluation_dict = ops_to_dict(session, merge_dicts(self._evaluation_ops, self._last_evaluation_ops))
+                    evaluation_dict = ops_to_dict(session,
+                                                  merge_dicts(self._evaluation_ops,
+                                                              self._last_evaluation_ops))
 
             # write event summaries to disk
             if self.config.io['log_model_summaries']:
+                # noinspection PyUnboundLocalVariable
                 self._summary_writer.add_summary(evaluation_dict['merged_summaries_op'],
                                                  global_step=evaluation_dict['global_step'])
 
             # remove non-user facing ops
-            if pretty: [evaluation_dict.pop(k) for k in evaluation_dict.keys() if 'op' in k]
+            if pretty:
+                for k in evaluation_dict.keys():
+                    if 'op' in k:
+                        evaluation_dict.pop(k)
 
             return evaluation_dict
 
@@ -334,25 +368,27 @@ class RGNModel(object):
             raise RuntimeError('Model has not been started or has already finished.')
 
     def _predict(self, session):
-        """ Predict 3D structures. """
-
+        """
+        Predict 3D structures.
+        """
         if RGNModel.is_started:
             # evaluate prediction dict
             prediction_dict = ops_to_dict(session, self._prediction_ops)
 
             # process tertiary sequences
-            if prediction_dict.has_key('coordinates'): prediction_dict['coordinates'] = np.transpose(
-                prediction_dict['coordinates'], (1, 2, 0))
+            if prediction_dict.has_key('coordinates'):
+                prediction_dict['coordinates'] = np.transpose(prediction_dict['coordinates'], (1, 2, 0))
 
             # generate return dict
             predictions = {}
             for id_, num_steps, tertiary, recurrent_states in izip_longest(*[prediction_dict.get(key, [])
-                                                                             for key in
-                                                                             ['ids', 'num_stepss', 'coordinates',
-                                                                              'recurrent_states']]):
+                                                                             for key in ['ids',
+                                                                                         'num_steps',
+                                                                                         'coordinates',
+                                                                                         'recurrent_states']]):
                 prediction = {}
 
-                if tertiary is not None:
+                if tertiary:
                     last_atom = (num_steps - self.config.io['num_edge_residues']) * NUM_DIHEDRALS
                     prediction.update({'tertiary': tertiary[:, :last_atom]})
 
@@ -366,7 +402,9 @@ class RGNModel(object):
             raise RuntimeError('Model has not been started or has already finished.')
 
     def _diagnose(self, session, pretty=True):
-        """ Compute and return diagnostic measurements like weight norms and curriculum quantiles. """
+        """
+        Compute and return diagnostic measurements like weight norms and curriculum quantiles.
+        """
 
         diagnostic_dict = ops_to_dict(session, self._diagnostic_ops)
 
@@ -400,8 +438,10 @@ class RGNModel(object):
         return diagnostic_dict
 
     def _start(self, evaluation_models, session=None, restore_if_checkpointed=True):
-        """ Initializes model from scratch or loads state from disk.
-            Must be run once (and only once) before model is used. """
+        """
+        Initializes model from scratch or loads state from disk.
+        Must be run once (and only once) before model is used.
+        """
 
         if not RGNModel.is_started:
             # Checkpointing. Must be done here after all models have been instantiated, because evaluation models may introduce additional variables
@@ -429,7 +469,8 @@ class RGNModel(object):
                                                          collections=[model_name + '_' + tf.GraphKeys.SUMMARIES])
 
                     # summaries for trainable variables and their activations
-                    for var in tf.trainable_variables(): tf.summary.histogram(var.name, var)
+                    for var in tf.trainable_variables():
+                        tf.summary.histogram(var.name, var)
                     layers.summarize_activations()
 
                     # add housekeeping training ops that merge and write summaries
@@ -437,13 +478,15 @@ class RGNModel(object):
                 self._diagnostic_ops.update({'global_step': self._global_step,
                                              'base_merged_summaries_op': tf.summary.merge_all(),
                                              # leftovers not covered by model-specific 'summaries'
-                                             'merged_summaries_op': tf.summary.merge_all(
-                                                 self.config.io['name'] + '_' + tf.GraphKeys.SUMMARIES)})
+                                             'merged_summaries_op': tf.summary.merge_all(self.config.io['name']
+                                                                                         + '_'
+                                                                                         + tf.GraphKeys.SUMMARIES)})
 
                 # ditto for evaluation models
                 for model in evaluation_models:
                     if model.mode == 'evaluation':
                         model._summary_writer = self._summary_writer
+                        # noinspection PyProtectedMember
                         model._last_evaluation_ops.update({
                             'global_step': self._global_step,
                             'merged_summaries_op': tf.summary.merge_all(
@@ -493,32 +536,44 @@ class RGNModel(object):
             raise RuntimeError('Model already started.')
 
     def _save(self, session):
-        """ Checkpoints current model. """
+        """
+        Checkpoints current model.
+        """
 
         checkpoints_dir = self.config.io['checkpoints_directory']
-        if not os.path.exists(checkpoints_dir): os.makedirs(checkpoints_dir)
-        return self._saver.save(session, checkpoints_dir, global_step=self._global_step)
+        if not os.path.exists(checkpoints_dir):
+            os.makedirs(checkpoints_dir)
+        return self._saver.save(session,
+                                checkpoints_dir,
+                                global_step=self._global_step)
 
     def _is_done(self):
-        """ Returns True if training is finished, False otherwise. """
-
+        """
+        Returns True if training is finished, False otherwise.
+        """
         return self._coordinator.should_stop()
 
     def _current_step(self, session):
-        """ Returns the current global step. """
-
+        """
+        Returns the current global step.
+        """
         return session.run(self._global_step)
 
     def _finish(self, session, save=True, close_session=True, reset_graph=True):
-        """ Instructs the model to shutdown. """
-
+        """
+        Instructs the model to shutdown.
+        """
         self._coordinator.request_stop()
         self._coordinator.join(self._threads)
 
-        if save: self.save(session)
-        if self.config.io['log_model_summaries']: self._summary_writer.close()
-        if close_session: session.close()
-        if reset_graph: tf.reset_default_graph()
+        if save:
+            self.save(session)
+        if self.config.io['log_model_summaries']:
+            self._summary_writer.close()
+        if close_session:
+            session.close()
+        if reset_graph:
+            tf.reset_default_graph()
 
         RGNModel._num_models = 0
         RGNModel.is_started = False
@@ -526,7 +581,7 @@ class RGNModel(object):
         del self.train, self.diagnose, self.save, self.is_done, self.current_step, self.finish
 
 
-### Private functions
+# Private functions
 # These functions are meant strictly for internal use by RGNModel, and are 
 # generally quite ad hoc. For TF-based ones, they do not carry out proper scoping 
 # of their internals, as what they produce is meant to be dropped in the main TF 
