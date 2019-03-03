@@ -3,16 +3,20 @@
     There are some common conventions used throughout.
 
     BATCH_SIZE is the size of the batch, and may vary from iteration to iteration.
-    NUM_STEPS is the length of the longest sequence in the data set (not batch). It is fixed as part of the tf graph.
-    NUM_DIHEDRALS is the number of dihedral angles per residue (phi, psi, omega). It is always 3.
-    NUM_DIMENSIONS is a constant of nature, the number of physical spatial dimensions. It is always 3.
+    NUM_STEPS is the length of the longest sequence in the data set (not batch).
+            It is fixed as part of the tf graph.
+    NUM_DIHEDRALS is the number of dihedral angles per residue (phi, psi, omega).
+            It is always 3.
+    NUM_DIMENSIONS is a constant of nature, the number of physical spatial dimensions.
+            It is always 3.
 
-    In general, this is an implicit ordering of tensor dimensions that is respected throughout. It is:
-
+    In general, this is an implicit ordering of tensor dimensions that is respected throughout.
+    It is:
         NUM_STEPS, BATCH_SIZE, NUM_DIHEDRALS, NUM_DIMENSIONS
 
-    The only exception is when NUM_DIHEDRALS are fused into NUM_STEPS. Btw what is setting the standard is the builtin 
-    interface of tensorflow.models.rnn.rnn, which expects NUM_STEPS x [BATCH_SIZE, NUM_AAS].
+    The only exception is when NUM_DIHEDRALS are fused into NUM_STEPS.
+    Btw what is setting the standard is the builtin interface of tensorflow.models.rnn.rnn,
+     which expects NUM_STEPS x [BATCH_SIZE, NUM_AAS].
 """
 
 __author__ = "Mohammed AlQuraishi"
@@ -32,8 +36,11 @@ BOND_ANGLES = np.array([2.124, 1.941, 2.028], dtype='float32')
 
 
 # Functions
-def angularize(input_tensor, name=None):
-    """ Restricts real-valued tensors to the interval [-pi, pi] by feeding them through a cosine. """
+def angularize(input_tensor,
+               name=None):
+    """
+    Restricts real-valued tensors to the interval (-pi, pi] by feeding them through a cosine.
+    """
 
     with tf.name_scope(name, 'angularize', [input_tensor]) as scope:
         input_tensor = tf.convert_to_tensor(input_tensor, name='input_tensor')
@@ -41,20 +48,25 @@ def angularize(input_tensor, name=None):
         return tf.multiply(np.pi, tf.cos(input_tensor + (np.pi / 2)), name=scope)
 
 
-def reduce_mean_angle(radii, angles, use_complex=False, name=None):
-    """ Computes the weighted mean of angles. Accepts option to compute use complex exponentials or real numbers.
+def reduce_mean_angle(radii,
+                      angles,
+                      use_complex=False,
+                      name=None):
+    """
+    Computes the weighted mean of angles.
+    Accepts option to compute use complex exponentials or real numbers.
 
-        Complex number-based version is giving wrong gradients for some reason, but forward calculation is fine.
+    Complex number-based version is giving wrong gradients for some reason,
+    but forward calculation is fine.
 
-        See https://en.wikipedia.org/wiki/Mean_of_circular_quantities
+    See https://en.wikipedia.org/wiki/Mean_of_circular_quantities
 
     Args:
         radii: [BATCH_SIZE, NUM_ANGLES]
         angles:  [NUM_ANGLES, NUM_DIHEDRALS]
 
     Returns:
-                 [BATCH_SIZE, NUM_DIHEDRALS]
-
+        [BATCH_SIZE, NUM_DIHEDRALS]
     """
 
     with tf.name_scope(name, 'reduce_mean_angle', [radii, angles]) as scope:
@@ -66,9 +78,11 @@ def reduce_mean_angle(radii, angles, use_complex=False, name=None):
             c_rads = tf.complex(radii, 0.)  # cast to complex numbers
             exps = tf.exp(tf.complex(0., angles))  # convert to point on complex plane
 
-            unit_coords = tf.matmul(c_rads, exps)  # take the weighted mixture of the unit circle coordinates
+            # take the weighted mixture of the unit circle coordinates
+            unit_coords = tf.matmul(c_rads, exps)
 
-            return tf.angle(unit_coords, name=scope)  # return angle of averaged coordinate
+            # return angle of averaged coordinate
+            return tf.angle(unit_coords, name=scope)
 
         else:
             # use real-numbered pairs of values
@@ -81,15 +95,21 @@ def reduce_mean_angle(radii, angles, use_complex=False, name=None):
             return tf.atan2(y_coords, x_coords, name=scope)
 
 
-def reduce_l2_norm(input_tensor, reduction_indices=None, keep_dims=None, weights=None, epsilon=1e-12, name=None):
-    """ Computes the (possibly weighted) L2 norm of a tensor along the dimensions given in reduction_indices.
+def reduce_l2_norm(input_tensor,
+                   reduction_indices=None,
+                   keep_dims=None,
+                   weights=None,
+                   epsilon=1e-12,
+                   name=None):
+    """
+    Computes the (possibly weighted) L2 norm of a tensor along
+     the dimensions given in reduction_indices.
 
     Args:
         input_tensor: [..., NUM_DIMENSIONS, ...]
-        weights:      [..., NUM_DIMENSIONS, ...]
+        weights: [..., NUM_DIMENSIONS, ...]
 
-    Returns:
-                      [..., ...]
+    Returns: [..., ...]
     """
 
     with tf.name_scope(name, 'reduce_l2_norm', [input_tensor]) as scope:
@@ -99,24 +119,28 @@ def reduce_l2_norm(input_tensor, reduction_indices=None, keep_dims=None, weights
         if weights is not None:
             input_tensor_sq = input_tensor_sq * weights
 
-        return tf.sqrt(
-            tf.maximum(
-                tf.reduce_sum(input_tensor_sq, axis=reduction_indices, keep_dims=keep_dims),
-                epsilon
-            ),
-            name=scope
-        )
+        return tf.sqrt(tf.maximum(tf.reduce_sum(input_tensor_sq,
+                                                axis=reduction_indices,
+                                                keep_dims=keep_dims),
+                                  epsilon),
+                       name=scope)
 
 
-def reduce_l1_norm(input_tensor, reduction_indices=None, keep_dims=None, weights=None, non_negative=True, name=None):
-    """ Computes the (possibly weighted) L1 norm of a tensor along the dimensions given in reduction_indices.
+def reduce_l1_norm(input_tensor,
+                   reduction_indices=None,
+                   keep_dims=None,
+                   weights=None,
+                   non_negative=True,
+                   name=None):
+    """
+    Computes the (possibly weighted) L1 norm of a tensor
+     along the dimensions given in reduction_indices.
 
     Args:
         input_tensor: [..., NUM_DIMENSIONS, ...]
-        weights:      [..., NUM_DIMENSIONS, ...]
+        weights: [..., NUM_DIMENSIONS, ...]
 
-    Returns:
-                      [..., ...]
+    Returns: [..., ...]
     """
 
     with tf.name_scope(name, 'reduce_l1_norm', [input_tensor]) as scope:
@@ -127,18 +151,26 @@ def reduce_l1_norm(input_tensor, reduction_indices=None, keep_dims=None, weights
         if weights is not None:
             input_tensor = input_tensor * weights
 
-        return tf.reduce_sum(input_tensor, axis=reduction_indices, keep_dims=keep_dims, name=scope)
+        return tf.reduce_sum(input_tensor,
+                             axis=reduction_indices,
+                             keep_dims=keep_dims,
+                             name=scope)
 
 
-def dihedral_to_point(dihedral, r=BOND_LENGTHS, theta=BOND_ANGLES, name=None):
-    """ Takes triplets of dihedral angles (phi, psi, omega) and returns 3D points ready for use in
-        reconstruction of coordinates. Bond lengths and angles are based on idealized averages.
+def dihedral_to_point(dihedral,
+                      r=BOND_LENGTHS,
+                      theta=BOND_ANGLES,
+                      name=None):
+    """
+    Takes triplets of dihedral angles (phi, psi, omega)
+     and returns 3D points ready for use in reconstruction of coordinates.
+      Bond lengths and angles are based on idealized averages.
 
     Args:
         dihedral: [NUM_STEPS, BATCH_SIZE, NUM_DIHEDRALS]
 
     Returns:
-                  [NUM_STEPS x NUM_DIHEDRALS, BATCH_SIZE, NUM_DIMENSIONS]
+        [NUM_STEPS x NUM_DIHEDRALS, BATCH_SIZE, NUM_DIMENSIONS]
     """
 
     with tf.name_scope(name, 'dihedral_to_point', [dihedral]) as scope:
@@ -174,21 +206,30 @@ def dihedral_to_point(dihedral, r=BOND_LENGTHS, theta=BOND_ANGLES, name=None):
         return pt_final
 
 
-def point_to_coordinate(pt, num_fragments=6, parallel_iterations=4, swap_memory=False, name=None):
-    """ Takes points from dihedral_to_point and sequentially converts them into the coordinates of a 3D structure.
+def point_to_coordinate(pt,
+                        num_fragments=6,
+                        parallel_iterations=4,
+                        swap_memory=False,
+                        name=None):
+    """
+    Takes points from dihedral_to_point and sequentially converts
+     them into the coordinates of a 3D structure.
 
-        Reconstruction is done in parallel, by independently reconstructing num_fragments fragments and then
-        reconstituting the chain at the end in reverse order. The core reconstruction algorithm is NeRF, based on
-        DOI: 10.1002/jcc.20237 by Parsons et al. 2005. The parallelized version is described in XXX.
+    Reconstruction is done in parallel, by independently reconstructing
+     num_fragments fragments and then reconstituting the chain at the end
+      in reverse order. The core reconstruction algorithm is NeRF, based on
+      DOI: 10.1002/jcc.20237 by Parsons et al. 2005.
+      The parallelized version is described in XXX.
 
     Args:
         pt: [NUM_STEPS x NUM_DIHEDRALS, BATCH_SIZE, NUM_DIMENSIONS]
 
     Opts:
-        num_fragments: Number of fragments to reconstruct in parallel. If None, the number is chosen adaptively
+        num_fragments: Number of fragments to reconstruct in parallel.
+                       If None, the number is chosen adaptively
 
     Returns:
-            [NUM_STEPS x NUM_DIHEDRALS, BATCH_SIZE, NUM_DIMENSIONS] 
+        [NUM_STEPS x NUM_DIHEDRALS, BATCH_SIZE, NUM_DIMENSIONS]
     """
 
     with tf.name_scope(name, 'point_to_coordinate', [pt]) as scope:
@@ -206,87 +247,113 @@ def point_to_coordinate(pt, num_fragments=6, parallel_iterations=4, swap_memory=
                              [-np.sqrt(2.0), 0, 0], [0, 0, 0]],
                             dtype='float32')
 
-        init_coords = Triplet(  # NUM_DIHEDRALS x [NUM_FRAGS, BATCH_SIZE, NUM_DIMENSIONS]
+        # NUM_DIHEDRALS x [NUM_FRAGS, BATCH_SIZE, NUM_DIMENSIONS]
+        init_coords = Triplet(
             *[tf.reshape(tf.tile(row[np.newaxis],
-                                 tf.stack([num_fragments * batch_size, 1])
-                                 ),
-                         [num_fragments, batch_size, NUM_DIMENSIONS]
-                         ) for row in init_mat]
-        )
+                                 tf.stack([num_fragments * batch_size, 1])),
+                         [num_fragments, batch_size, NUM_DIMENSIONS]) for row in init_mat])
 
         # pad points to yield equal-sized fragments
-        r = ((num_fragments  # (NUM_FRAGS x FRAG_SIZE) - (NUM_STEPS x NUM_DIHEDRALS)
-              - (s % num_fragments))
-             % num_fragments)
-        pt = tf.pad(pt, [[0, r], [0, 0], [0, 0]])  # [NUM_FRAGS x FRAG_SIZE, BATCH_SIZE, NUM_DIMENSIONS]
-        pt = tf.reshape(pt,  # [NUM_FRAGS, FRAG_SIZE,  BATCH_SIZE, NUM_DIMENSIONS]
-                        [num_fragments, -1, batch_size, NUM_DIMENSIONS]
-                        )
-        pt = tf.transpose(pt, perm=[1, 0, 2, 3])  # [FRAG_SIZE, NUM_FRAGS,  BATCH_SIZE, NUM_DIMENSIONS]
+        # (NUM_FRAGS x FRAG_SIZE) - (NUM_STEPS x NUM_DIHEDRALS)
+        r = ((num_fragments - (s % num_fragments)) % num_fragments)
+
+        # [NUM_FRAGS x FRAG_SIZE, BATCH_SIZE, NUM_DIMENSIONS]
+        pt = tf.pad(pt, [[0, r], [0, 0], [0, 0]])
+
+        # [NUM_FRAGS, FRAG_SIZE,  BATCH_SIZE, NUM_DIMENSIONS]
+        pt = tf.reshape(pt,
+                        [num_fragments, -1, batch_size, NUM_DIMENSIONS])
+        # [FRAG_SIZE, NUM_FRAGS,  BATCH_SIZE, NUM_DIMENSIONS]
+        pt = tf.transpose(pt, perm=[1, 0, 2, 3])
 
         # extension function used for single atom reconstruction and whole fragment alignment
         def extend(tri, point, multi_m):
             """
             Args:
-                tri: NUM_DIHEDRALS x [NUM_FRAGS/0,         BATCH_SIZE, NUM_DIMENSIONS]
-                point:                  [NUM_FRAGS/FRAG_SIZE, BATCH_SIZE, NUM_DIMENSIONS]
-                multi_m: bool indicating whether m (and tri) is higher rank. pt is always higher rank;
+                tri: NUM_DIHEDRALS x [NUM_FRAGS/0, BATCH_SIZE, NUM_DIMENSIONS]
+                point: [NUM_FRAGS/FRAG_SIZE, BATCH_SIZE, NUM_DIMENSIONS]
+                multi_m: bool indicating whether m (and tri) is higher rank.
+                         pt is always higher rank;
                          what changes is what the first rank is.
             """
 
-            bc = tf.nn.l2_normalize(tri.c - tri.b, -1, name='bc')  # [NUM_FRAGS/0, BATCH_SIZE, NUM_DIMS]
-            n = tf.nn.l2_normalize(tf.cross(tri.b - tri.a, bc), -1, name='n')  # [NUM_FRAGS/0, BATCH_SIZE, NUM_DIMS]
-            if multi_m:  # multiple fragments, one atom at a time.
-                m = tf.transpose(tf.stack([bc, tf.cross(n, bc), n]), perm=[1, 2, 3, 0],
-                                 name='m')  # [NUM_FRAGS,   BATCH_SIZE, NUM_DIMS, 3 TRANS]
+            # [NUM_FRAGS/0, BATCH_SIZE, NUM_DIMS]
+            bc = tf.nn.l2_normalize(tri.c - tri.b, -1, name='bc')
+
+            # [NUM_FRAGS/0, BATCH_SIZE, NUM_DIMS]
+            n = tf.nn.l2_normalize(tf.cross(tri.b - tri.a, bc), -1, name='n')
+
+            # multiple fragments, one atom at a time.
+            if multi_m:
+                # [NUM_FRAGS,   BATCH_SIZE, NUM_DIMS, 3 TRANS]
+                m = tf.transpose(tf.stack([bc, tf.cross(n, bc), n]),
+                                 perm=[1, 2, 3, 0],
+                                 name='m')
             else:  # single fragment, reconstructed entirely at once.
-                s_ = tf.pad(tf.shape(point), [[0, 1]], constant_values=3)  # FRAG_SIZE, BATCH_SIZE, NUM_DIMS, 3 TRANS
-                m = tf.transpose(tf.stack([bc, tf.cross(n, bc), n]), perm=[1, 2, 0])  # [BATCH_SIZE, NUM_DIMS, 3 TRANS]
-                m = tf.reshape(tf.tile(m, [s_[0], 1, 1]), s_, name='m')  # [FRAG_SIZE, BATCH_SIZE, NUM_DIMS, 3 TRANS]
-            coord = tf.add(tf.squeeze(tf.matmul(m, tf.expand_dims(point, 3)), axis=3), tri.c,
-                           name='coord')  # [NUM_FRAGS/FRAG_SIZE, BATCH_SIZE, NUM_DIMS]
+                # FRAG_SIZE, BATCH_SIZE, NUM_DIMS, 3 TRANS
+                s_ = tf.pad(tf.shape(point), [[0, 1]],
+                            constant_values=3)
+                # [BATCH_SIZE, NUM_DIMS, 3 TRANS]
+                m = tf.transpose(tf.stack([bc, tf.cross(n, bc), n]),
+                                 perm=[1, 2, 0])
+                # [FRAG_SIZE, BATCH_SIZE, NUM_DIMS, 3 TRANS]
+                m = tf.reshape(tf.tile(m, [s_[0], 1, 1]),
+                               s_, name='m')
+
+            # [NUM_FRAGS/FRAG_SIZE, BATCH_SIZE, NUM_DIMS]
+            coord = tf.add(tf.squeeze(tf.matmul(m, tf.expand_dims(point, 3)),
+                                      axis=3),
+                           tri.c,
+                           name='coord')
             return coord
 
         # loop over FRAG_SIZE in NUM_FRAGS parallel fragments,
         # sequentially generating the coordinates for each fragment across all batches
         i = tf.constant(0)
         s_padded = tf.shape(pt)[0]  # FRAG_SIZE
-        coords_ta = tf.TensorArray(tf.float32, size=s_padded, tensor_array_name='coordinates_array')
+        coords_ta = tf.TensorArray(tf.float32,
+                                   size=s_padded,
+                                   tensor_array_name='coordinates_array')
 
         # FRAG_SIZE x [NUM_FRAGS, BATCH_SIZE, NUM_DIMENSIONS]
-
-        def loop_extend(i_, tri, coords_ta_):  # FRAG_SIZE x [NUM_FRAGS, BATCH_SIZE, NUM_DIMENSIONS]
+        def loop_extend(i_, tri, coords_ta_):
             coord = extend(tri, pt[i_], True)
             return [i_ + 1, Triplet(tri.b, tri.c, coord), coords_ta_.write(i_, coord)]
 
-        _, tris, coords_pre_trans_ta = tf.while_loop(
-            lambda i_, _1, _2: i_ < s_padded,
-            loop_extend,
-            [i, init_coords, coords_ta],
-            parallel_iterations=parallel_iterations,
-            swap_memory=swap_memory
-        )
         # NUM_DIHEDRALS x [NUM_FRAGS, BATCH_SIZE, NUM_DIMENSIONS],
         # FRAG_SIZE x [NUM_FRAGS, BATCH_SIZE, NUM_DIMENSIONS]
+        _, tris, coords_pre_trans_ta = tf.while_loop(lambda i_, _1, _2: i_ < s_padded,
+                                                     loop_extend,
+                                                     [i, init_coords, coords_ta],
+                                                     parallel_iterations=parallel_iterations,
+                                                     swap_memory=swap_memory)
 
-        # loop over NUM_FRAGS in reverse order, bringing all the downstream fragments in alignment with current fragment
-        coords_pre_trans = tf.transpose(
-            coords_pre_trans_ta.stack(),
-            perm=[1, 0, 2, 3])  # [NUM_FRAGS, FRAG_SIZE, BATCH_SIZE, NUM_DIMENSIONS]
-        i = tf.shape(coords_pre_trans)[0]  # NUM_FRAGS
+        # loop over NUM_FRAGS in reverse order,
+        # bringing all the downstream fragments in alignment with current fragment
+
+        # [NUM_FRAGS, FRAG_SIZE, BATCH_SIZE, NUM_DIMENSIONS]
+        coords_pre_trans = tf.transpose(coords_pre_trans_ta.stack(),
+                                        perm=[1, 0, 2, 3])
+
+        # NUM_FRAGS
+        i = tf.shape(coords_pre_trans)[0]
 
         def loop_trans(i_, coords_):
             transformed_coords = extend(Triplet(*[di[i_] for di in tris]), coords_, False)
             return [i_ - 1, tf.concat([coords_pre_trans[i_], transformed_coords], 0)]
 
-        _, coords_trans = tf.while_loop(lambda i_, _: i_ > -1, loop_trans, [i - 2, coords_pre_trans[-1]],
-                                        parallel_iterations=parallel_iterations, swap_memory=swap_memory)
         # [NUM_FRAGS x FRAG_SIZE, BATCH_SIZE, NUM_DIMENSIONS]
+        _, coords_trans = tf.while_loop(lambda i_, _: i_ > -1,
+                                        loop_trans,
+                                        [i - 2, coords_pre_trans[-1]],
+                                        parallel_iterations=parallel_iterations,
+                                        swap_memory=swap_memory)
 
         # lose last atom and pad from the front to gain an atom ([0,0,0],
         # consistent with init_mat), to maintain correct atom ordering
+        # [NUM_STEPS x NUM_DIHEDRALS, BATCH_SIZE, NUM_DIMENSIONS]
         coords = tf.pad(coords_trans[:s - 1], [[1, 0], [0, 0], [0, 0]],
-                        name=scope)  # [NUM_STEPS x NUM_DIHEDRALS, BATCH_SIZE, NUM_DIMENSIONS]
+                        name=scope)
 
         return coords
 
@@ -297,11 +364,11 @@ def drmsd(u, v, weights, name=None):
         Vectors are assumed to be in the third dimension. Op is done element-wise over batch.
 
     Args:
-        u, v:    [NUM_STEPS, BATCH_SIZE, NUM_DIMENSIONS]
+        u, v: [NUM_STEPS, BATCH_SIZE, NUM_DIMENSIONS]
         weights: [NUM_STEPS, NUM_STEPS, BATCH_SIZE]
 
     Returns:
-                 [BATCH_SIZE]
+        [BATCH_SIZE]
     """
 
     with tf.name_scope(name, 'dRMSD', [u, v, weights]) as scope:
@@ -309,28 +376,36 @@ def drmsd(u, v, weights, name=None):
         v = tf.convert_to_tensor(v, name='v')
         weights = tf.convert_to_tensor(weights, name='weights')
 
-        diffs = pairwise_distance(u) - pairwise_distance(v)  # [NUM_STEPS, NUM_STEPS, BATCH_SIZE]
-        norms = reduce_l2_norm(diffs, reduction_indices=[0, 1], weights=weights, name=scope)  # [BATCH_SIZE]
+        # [NUM_STEPS, NUM_STEPS, BATCH_SIZE]
+        diffs = pairwise_distance(u) - pairwise_distance(v)
+        # [BATCH_SIZE]
+        norms = reduce_l2_norm(diffs,
+                               reduction_indices=[0, 1],
+                               weights=weights,
+                               name=scope)
 
         return norms
 
 
 def pairwise_distance(u, name=None):
-    """ Computes the pairwise distance (l2 norm) between all vectors in the tensor.
-
-        Vectors are assumed to be in the third dimension. Op is done element-wise over batch.
+    """
+    Computes the pairwise distance (l2 norm) between all vectors in the tensor.
+    Vectors are assumed to be in the third dimension.
+    Op is done element-wise over batch.
 
     Args:
         u: [NUM_STEPS, BATCH_SIZE, NUM_DIMENSIONS]
 
     Returns:
-           [NUM_STEPS, NUM_STEPS, BATCH_SIZE]
-
+        [NUM_STEPS, NUM_STEPS, BATCH_SIZE]
     """
     with tf.name_scope(name, 'pairwise_distance', [u]) as scope:
         u = tf.convert_to_tensor(u, name='u')
 
-        diffs = u - tf.expand_dims(u, 1)  # [NUM_STEPS, NUM_STEPS, BATCH_SIZE, NUM_DIMENSIONS]
-        norms = reduce_l2_norm(diffs, reduction_indices=[3], name=scope)  # [NUM_STEPS, NUM_STEPS, BATCH_SIZE]
+        # [NUM_STEPS, NUM_STEPS, BATCH_SIZE, NUM_DIMENSIONS]
+        diffs = u - tf.expand_dims(u, 1)
+
+        # [NUM_STEPS, NUM_STEPS, BATCH_SIZE]
+        norms = reduce_l2_norm(diffs, reduction_indices=[3], name=scope)
 
         return norms
