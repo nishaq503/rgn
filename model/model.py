@@ -194,8 +194,8 @@ class RGNModel(object):
                 max_length = config.optimization['num_steps']
 
             data_flow_config = merge_dicts(config.io, config.initialization, config.optimization, config.queueing)
-            ids, primaries, evolutionaries, secondaries, tertiaries, masks, num_steps = _dataflow(data_flow_config,
-                                                                                                  max_length)
+            ids, primaries, evolutionaries, secondaries, tertiaries, masks, num_steps = _data_flow(data_flow_config,
+                                                                                                   max_length)
 
             # Set up inputs
             inputs = _inputs(merge_dicts(config.architecture, config.initialization),
@@ -306,7 +306,7 @@ class RGNModel(object):
                     initializer=tf.constant_initializer([DUMMY_LOSS] * config.curriculum['change_num_iterations']),
                     shape=[config.curriculum['change_num_iterations']], trainable=False, name='curriculum_loss_history')
                 if mode == 'evaluation' and config.curriculum['update_loss_history']:
-                    update_curriculum_history_op = _history(config.io, curriculum_loss, curriculum_loss_history)
+                    update_curriculum_history_op = _history(curriculum_loss, curriculum_loss_history)
                     last_evaluation_ops.update({'update_curriculum_history_op': update_curriculum_history_op})
 
             # Training
@@ -591,11 +591,16 @@ class RGNModel(object):
 # everything that needs to be acted upon by RGNModel. So they don't modify
 # the state of anything that's passed to them.
 
-def _device_function_constructor(functions_on_devices={}, default_device=''):
-    """ Returns a device placement function to insure that each operation is placed on the most optimal device. """
+def _device_function_constructor(functions_on_devices=None, default_device=''):
+    """
+    Returns a device placement function to ensure that each operation is placed on the most optimal device.
+    """
+
+    if functions_on_devices is None:
+        functions_on_devices = {}
 
     def device_function(op):
-        # note that one can't depend on ordering of items in dicts due to their indeterminancy
+        # note that one can't depend on ordering of items in dicts
         for device, funcs in functions_on_devices.iteritems():
             if any(((func in op.name) or any(func in node.name for node in op.inputs)) for func in funcs):
                 return device
@@ -605,9 +610,10 @@ def _device_function_constructor(functions_on_devices={}, default_device=''):
     return device_function
 
 
-def _dataflow(config, max_length):
-    """ Creates TF queues and nodes for inputting and batching data. """
-
+def _data_flow(config, max_length):
+    """
+    Creates TF queues and nodes for inputting and batching data.
+    """
     # files
     if config['data_files'] is not None:
         files = config['data_files']
@@ -615,33 +621,39 @@ def _dataflow(config, max_length):
         files = glob(config['data_files_glob'])
 
     # files queue
-    file_queue = tf.train.string_input_producer(
-        files,
-        num_epochs=config['num_epochs'],
-        shuffle=config['shuffle'],
-        seed=config['queue_seed'],
-        capacity=config['file_queue_capacity'],
-        name='file_queue')
+    file_queue = tf.train.string_input_producer(files,
+                                                num_epochs=config['num_epochs'],
+                                                shuffle=config['shuffle'],
+                                                seed=config['queue_seed'],
+                                                capacity=config['file_queue_capacity'],
+                                                name='file_queue')
 
     # read instance
-    inputs = read_protein(file_queue, max_length, config['num_edge_residues'], config['num_evo_entries'])
+    inputs = read_protein(file_queue,
+                          max_length,
+                          config['num_edge_residues'],
+                          config['num_evo_entries'])
 
     # randomization
     if config['shuffle']:  # based on https://github.com/tensorflow/tensorflow/issues/5147#issuecomment-271086206
         dtypes = list(map(lambda x: x.dtype, inputs))
         shapes = list(map(lambda x: x.get_shape(), inputs))
-        randomizer_queue = tf.RandomShuffleQueue(capacity=config['batch_queue_capacity'],
+        randomized_queue = tf.RandomShuffleQueue(capacity=config['batch_queue_capacity'],
                                                  min_after_dequeue=config['min_after_dequeue'],
-                                                 dtypes=dtypes, seed=config['queue_seed'], name='randomization_queue')
-        randomizer_enqueue_op = randomizer_queue.enqueue(inputs)
-        randomizer_qr = tf.train.QueueRunner(randomizer_queue, [randomizer_enqueue_op])
-        tf.add_to_collection(tf.GraphKeys.QUEUE_RUNNERS, randomizer_qr)
-        inputs = randomizer_queue.dequeue()
-        for tensor, shape in zip(inputs, shapes): tensor.set_shape(shape)
+                                                 dtypes=dtypes, seed=config['queue_seed'],
+                                                 name='randomization_queue')
+        randomized_enqueue_op = randomized_queue.enqueue(inputs)
+        randomized_qr = tf.train.QueueRunner(randomized_queue,
+                                             [randomized_enqueue_op])
+        tf.add_to_collection(tf.GraphKeys.QUEUE_RUNNERS,
+                             randomized_qr)
+        inputs = randomized_queue.dequeue()
+        for tensor, shape in zip(inputs, shapes):
+            tensor.set_shape(shape)
     num_steps, keep = inputs[-2:]
 
     # bucketing
-    if config['bucket_boundaries'] is not None:
+    if config['bucket_boundaries']:
         batch_fun = tf.contrib.training.bucket_by_sequence_length
         batch_kwargs = {'input_length': num_steps,
                         'bucket_boundaries': config['bucket_boundaries'],
@@ -653,48 +665,63 @@ def _dataflow(config, max_length):
         sel_slice = slice(len(inputs) - 1)
 
     # batching
-    inputs = batch_fun(tensors=list(inputs)[:-1], keep_input=keep, dynamic_pad=True, batch_size=config['batch_size'],
-                       name='batching_queue', **batch_kwargs)
-    ids, primaries_batch_major, evolutionaries_batch_major, secondaries_batch_major, tertiaries_batch_major, masks_batch_major, num_stepss = \
-        inputs[sel_slice]
+    inputs = batch_fun(tensors=list(inputs)[:-1],
+                       keep_input=keep,
+                       dynamic_pad=True,
+                       batch_size=config['batch_size'],
+                       name='batching_queue',
+                       **batch_kwargs)
+    ids, primaries_batch_major, evolutionaries_batch_major, secondaries_batch_major, tertiaries_batch_major, masks_batch_major, num_steps = inputs[sel_slice]
 
     # transpose to time_step major
     primaries = tf.transpose(primaries_batch_major, perm=(1, 0, 2), name='primaries')
     # primary sequences, i.e. one-hot sequences of amino acids.
     # [NUM_STEPS, BATCH_SIZE, NUM_AAS]
 
-    evolutionaries = tf.transpose(evolutionaries_batch_major, perm=(1, 0, 2), name='evolutionaries')
+    evolutionaries = tf.transpose(evolutionaries_batch_major,
+                                  perm=(1, 0, 2),
+                                  name='evolutionaries')
     # evolutionary sequences, i.e. multi-dimensional evolutionary profiles of amino acid propensities.
     # [NUM_STEPS, BATCH_SIZE, NUM_EVO_ENTRIES]
 
-    secondaries = tf.transpose(secondaries_batch_major, perm=(1, 0), name='secondaries')
+    secondaries = tf.transpose(secondaries_batch_major,
+                               perm=(1, 0),
+                               name='secondaries')
     # secondary sequences, i.e. sequences of DSSP classes.
     # [NUM_STEPS, BATCH_SIZE]
 
-    tertiaries = tf.transpose(tertiaries_batch_major, perm=(1, 0, 2), name='tertiaries')
+    tertiaries = tf.transpose(tertiaries_batch_major,
+                              perm=(1, 0, 2),
+                              name='tertiaries')
     # tertiary sequences, i.e. sequences of 3D coordinates.
     # [(NUM_STEPS - NUM_EDGE_RESIDUES) x NUM_DIHEDRALS, BATCH_SIZE, NUM_DIMENSIONS]
 
-    masks = tf.transpose(masks_batch_major, perm=(1, 2, 0), name='masks')
+    masks = tf.transpose(masks_batch_major,
+                         perm=(1, 2, 0),
+                         name='masks')
     # mask matrix for each datum that masks meaningless distances.
     # [NUM_STEPS - NUM_EDGE_RESIDUES, NUM_STEPS - NUM_EDGE_RESIDUES, BATCH_SIZE]
 
     # assign names to the nameless
-    ids = tf.identity(ids, name='ids')
-    num_stepss = tf.identity(num_stepss, name='num_stepss')
+    ids = tf.identity(ids,
+                      name='ids')
+    num_steps = tf.identity(num_steps,
+                            name='num_steps')
 
-    return ids, primaries, evolutionaries, secondaries, tertiaries, masks, num_stepss
+    return ids, primaries, evolutionaries, secondaries, tertiaries, masks, num_steps
 
 
 def _inputs(config, primaries, evolutionaries):
-    """ Returns final concatenated input for use in recurrent layer. """
+    """
+    Returns final concatenated input for use in recurrent layer.
+    """
 
-    inputs_list = ([primaries] if config['include_primary'] else []) + \
-                  ([evolutionaries * config['evolutionary_multiplier']] if config['include_evolutionary'] else [])
+    inputs_list = ([primaries] if config['include_primary'] else [])
+    inputs_list += ([evolutionaries * config['evolutionary_multiplier']] if config['include_evolutionary'] else [])
 
-    if inputs_list is not []:
-        inputs = tf.concat(inputs_list, 2, name='inputs')
+    if inputs_list:
         # [NUM_STEPS, BATCH_SIZE, NUM_AAS or NUM_EVO_ENTRIES or NUM_AAS + NUM_EVO_ENTRIES]
+        inputs = tf.concat(inputs_list, 2, name='inputs')
     else:
         raise RuntimeError('Either primaries or evolutionaries (or both) must be used as inputs.')
 
@@ -702,49 +729,51 @@ def _inputs(config, primaries, evolutionaries):
 
 
 def _weights(config, masks, curriculum_step=None):
-    """ Returns dRMSD weights that mask meaningless (missing or longer than 
-        sequence residues) pairwise distances and incorporate the state of 
-        the curriculum to differentially weigh pairwise distances based on 
-        their proximity. """
+    """
+    Returns dRMSD weights that mask meaningless (missing or longer than
+    sequence residues) pairwise distances and incorporate the state of
+    the curriculum to differentially weigh pairwise distances based on
+    their proximity.
+    """
 
     if config['atoms'] == 'c_alpha':
         if config['mode'] != 'loss':
             # no loss-based curriculum, create fixed weighting matrix that weighs all distances equally. 
             # minus one factor is there because we ignore self-distances.
-            flat_curriculum_weights = np.ones(config['num_steps'] - config['num_edge_residues'] - 1, dtype='float32')
+            flat_curriculum_weights = np.ones(config['num_steps'] - config['num_edge_residues'] - 1,
+                                              dtype='float32')
 
-        elif config['mode'] == 'loss' and curriculum_step is not None:
+        elif config['mode'] == 'loss' and curriculum_step:
             # create appropriate weights based on curriculum parameters and current step.
             flat_curriculum_weights = curriculum_weights(base=curriculum_step,
                                                          slope=config['slope'],
-                                                         max_seq_length=config['num_steps'] - config[
-                                                             'num_edge_residues'])
+                                                         max_seq_length=config['num_steps'] - config['num_edge_residues'])
         else:
             raise RuntimeError('Curriculum step tensor not supplied.')
 
         # weighting matrix for entire batch that accounts for curriculum weighting.
-        unnormalized_weights = weighting_matrix(flat_curriculum_weights, name='unnormalized_weights')
+        un_normalized_weights = weighting_matrix(flat_curriculum_weights, name='un_normalized_weights')
         # [NUM_STEPS - NUM_EDGE_RESIDUES, NUM_STEPS - NUM_EDGE_RESIDUES]
 
         # create final weights by multiplying with masks and normalizing.
         mask_length = tf.shape(masks)[0]
-        unnormalized_masked_weights = masks * unnormalized_weights[:mask_length, :mask_length, tf.newaxis]
-        masked_weights = tf.div(unnormalized_masked_weights,
-                                tf.reduce_sum(unnormalized_masked_weights, axis=[0, 1]),
+        un_normalized_masked_weights = masks * un_normalized_weights[:mask_length, :mask_length, tf.newaxis]
+        masked_weights = tf.div(un_normalized_masked_weights,
+                                tf.reduce_sum(un_normalized_masked_weights, axis=[0, 1]),
                                 name='weights')
 
         return masked_weights, flat_curriculum_weights
 
     else:
-        raise NotImplementedError(
-            'Model does not currently support anything other than C alpha atoms for the loss function.')
+        raise NotImplementedError('Model does not currently support anything other than C alpha atoms for the loss function.')
 
 
-def _higher_recurrence(mode, config, inputs, num_stepss, alphabet=None):
-    """ Higher-order recurrence that creates multiple layers, possibly with interleaving dihedrals """
+def _higher_recurrence(mode, config, inputs, num_steps, alphabet=None):
+    """
+    Higher-order recurrence that creates multiple layers, possibly with interleaving dihedrals.
+    """
 
     # prep
-    is_training = (mode == 'training')
     initial_inputs = inputs
 
     # check if it's a simple recurrence that is just a lower-order recurrence (include simple multilayers) or a higher-order recurrence.
@@ -776,21 +805,26 @@ def _higher_recurrence(mode, config, inputs, num_stepss, alphabet=None):
                 layer_config.update({k: config[k][layer_idx] for k in ['alphabet_keep_probability',
                                                                        'alphabet_normalization',
                                                                        'recurrent_init']})
-                layer_config.update(
-                    {k: (config[k][layer_idx] if not config['single_or_no_alphabet'] else config[k]) for k in
-                     ['alphabet_size']})
+                layer_config.update({k: (config[k][layer_idx]
+                                         if not config['single_or_no_alphabet']
+                                         else config[k]) for k in['alphabet_size']})
 
                 # core lower-level recurrence
-                layer_recurrent_outputs, layer_recurrent_states = _recurrence(mode, layer_config, layer_inputs,
-                                                                              num_stepss)
+                layer_recurrent_outputs, layer_recurrent_states = _recurrence(mode,
+                                                                              layer_config,
+                                                                              layer_inputs,
+                                                                              num_steps)
 
                 # residual connections (only for recurrent outputs; other outputs are maintained but not wired in a residual manner)
                 # all recurrent layer sizes must be the same
-                if (residual_n >= 1) and ((layer_idx - residual_shift) % residual_n == 0) and (
-                        layer_idx >= residual_n + residual_shift):
+                if (residual_n >= 1)\
+                        and ((layer_idx - residual_shift) % residual_n == 0)\
+                        and (layer_idx >= residual_n + residual_shift):
                     layer_recurrent_outputs = layer_recurrent_outputs + layers_recurrent_outputs[-residual_n]
-                    print('residually wired layer ' + str(layer_idx - residual_n + 1) + ' to layer ' + str(
-                        layer_idx + 1))
+                    print('residually wired layer '
+                          + str(layer_idx - residual_n + 1)
+                          + ' to layer '
+                          + str(layer_idx + 1))
 
                 # add to list of recurrent layers' outputs (needed for residual connection and some skip connections)
                 layers_recurrent_outputs.append(layer_recurrent_outputs)
@@ -810,8 +844,8 @@ def _higher_recurrence(mode, config, inputs, num_stepss, alphabet=None):
                         layer_outputs.append(layer_inputs)
 
                     # skip connections from initial inputs only (these will not be connected to the final linear output layer)
-                    if config['input_to_recurrent_skip_connections'] and not config[
-                        'all_to_recurrent_skip_connections']:
+                    if config['input_to_recurrent_skip_connections']\
+                            and not config['all_to_recurrent_skip_connections']:
                         layer_outputs.append(initial_inputs)
 
                     # recurrent state
@@ -826,22 +860,27 @@ def _higher_recurrence(mode, config, inputs, num_stepss, alphabet=None):
         if config['recurrent_to_output_skip_connections']:
             return tf.concat(layers_recurrent_outputs, 2), tf.concat(layers_recurrent_states, 1)
         else:
+            # noinspection PyUnboundLocalVariable
             return layer_recurrent_outputs, tf.concat(layers_recurrent_states, 1)
     else:
         # simple recurrence, including multiple layers that use TF's builtin functionality, call lower-level recurrence function
-        return _recurrence(mode, config, initial_inputs, num_stepss)
+        return _recurrence(mode, config, initial_inputs, num_steps)
 
 
 def _recurrence(mode, config, inputs, num_stepss):
-    """ Recurrent layer for transforming inputs (primary sequences) into an internal representation. """
-
+    """
+    Recurrent layer for transforming inputs (primary sequences) into an internal representation.
+    """
     is_training = (mode == 'training')
-    reverse = lambda seqs: tf.reverse_sequence(seqs, num_stepss, seq_axis=0,
+    reverse = lambda seqs: tf.reverse_sequence(seqs,
+                                               num_stepss,
+                                               seq_axis=0,
                                                batch_axis=1)  # convenience function for sequence reversal
 
     # create recurrent initialization dict
-    if config['recurrent_init'] != None:
-        recurrent_init = dict_to_inits(config['recurrent_init'], config['recurrent_seed'])
+    if config['recurrent_init']:
+        recurrent_init = dict_to_inits(config['recurrent_init'],
+                                       config['recurrent_seed'])
     else:
         for case in Switch(config['recurrent_unit']):
             if case('LNLSTM'):
@@ -878,8 +917,12 @@ def _recurrence(mode, config, inputs, num_stepss):
         scopes = ['fw', 'bw'] if config['bidirectional'] else ['fw']
         for scope in scopes:
             with tf.variable_scope(scope):
-                rnn = cell(num_layers=num_layers, num_units=layer_size, direction=cudnn_rnn_ops.CUDNN_RNN_UNIDIRECTION,
-                           kernel_initializer=recurrent_init['base'], bias_initializer=recurrent_init['bias'],
+                # noinspection PyUnboundLocalVariable
+                rnn = cell(num_layers=num_layers,
+                           num_units=layer_size,
+                           direction=cudnn_rnn_ops.CUDNN_RNN_UNIDIRECTION,
+                           kernel_initializer=recurrent_init['base'],
+                           bias_initializer=recurrent_init['bias'],
                            **dropout_kwargs)
                 inputs_directed = inputs if scope == 'fw' else reverse(inputs)
                 outputs_directed, (_, states_directed) = rnn(inputs_directed, training=is_training)
@@ -890,18 +933,23 @@ def _recurrence(mode, config, inputs, num_stepss):
         states = tf.concat(states, 2)[0]
 
     else:
-        # TF-based dynamic rollout
+        # TF-based dynamic roll out
         if config['bidirectional']:
-            outputs, states = tf.nn.bidirectional_dynamic_rnn(
-                cell_fw=_recurrent_cell(mode, config, recurrent_init, 'fw'),
-                cell_bw=_recurrent_cell(mode, config, recurrent_init, 'bw'),
-                inputs=inputs, time_major=True, sequence_length=tf.to_int64(num_stepss),
-                dtype=tf.float32, swap_memory=True, parallel_iterations=config['num_recurrent_parallel_iters'])
+            # noinspection PyUnboundLocalVariable
+            outputs, states = tf.nn.bidirectional_dynamic_rnn(cell_fw=_recurrent_cell(mode, config, recurrent_init, 'fw'),
+                                                              cell_bw=_recurrent_cell(mode, config, recurrent_init, 'bw'),
+                                                              inputs=inputs,
+                                                              time_major=True,
+                                                              sequence_length=tf.to_int64(num_stepss),
+                                                              dtype=tf.float32,
+                                                              swap_memory=True,
+                                                              parallel_iterations=config['num_recurrent_parallel_iters'])
             outputs = tf.concat(outputs, 2)
             states = tf.concat(states, 2)
             # [NUM_STEPS, BATCH_SIZE, 2 x RECURRENT_LAYER_SIZE]
             # outputs of recurrent layer over all time steps.
         else:
+            # noinspection PyUnboundLocalVariable
             outputs, states = tf.nn.dynamic_rnn(cell=_recurrent_cell(mode, config, recurrent_init),
                                                 inputs=inputs, time_major=True, sequence_length=num_stepss,
                                                 dtype=tf.float32, swap_memory=True,
@@ -912,8 +960,10 @@ def _recurrence(mode, config, inputs, num_stepss):
         # add newly created variables to respective collections
         if is_training:
             for v in tf.trainable_variables():
-                if 'rnn' in v.name and ('cell/kernel' in v.name): tf.add_to_collection(tf.GraphKeys.WEIGHTS, v)
-                if 'rnn' in v.name and ('cell/bias' in v.name): tf.add_to_collection(tf.GraphKeys.BIASES, v)
+                if 'rnn' in v.name and ('cell/kernel' in v.name):
+                    tf.add_to_collection(tf.GraphKeys.WEIGHTS, v)
+                if 'rnn' in v.name and ('cell/bias' in v.name):
+                    tf.add_to_collection(tf.GraphKeys.BIASES, v)
 
     return outputs, states
 
@@ -927,13 +977,12 @@ def _recurrent_cell(mode, config, recurrent_init, name=''):
     cells = []
     for layer_idx, (
             layer_size, input_keep_prob, output_keep_prob, keep_prob, hidden_state_keep_prob, memory_cell_keep_prob) \
-            in enumerate(zip(
-        config['recurrent_layer_size'],
-        config['recurrent_input_keep_probability'],
-        config['recurrent_output_keep_probability'],
-        config['recurrent_keep_probability'],
-        config['recurrent_state_zonein_probability'],
-        config['recurrent_memory_zonein_probability'])):
+            in enumerate(zip(config['recurrent_layer_size'],
+                             config['recurrent_input_keep_probability'],
+                             config['recurrent_output_keep_probability'],
+                             config['recurrent_keep_probability'],
+                             config['recurrent_state_zonein_probability'],
+                             config['recurrent_memory_zonein_probability'])):
 
         # set context
         with tf.variable_scope('sublayer' + str(layer_idx) + (name if name is '' else '_' + name),
@@ -962,19 +1011,25 @@ def _recurrent_cell(mode, config, recurrent_init, name=''):
 
             # wrap cell with zoneout
             if hidden_state_keep_prob < 1 or memory_cell_keep_prob < 1:
-                cell = rnn_cell_extended.ZoneoutWrapper(cell=cell, is_training=is_training, seed=config['zoneout_seed'],
+                # noinspection PyUnboundLocalVariable
+                cell = rnn_cell_extended.ZoneoutWrapper(cell=cell,
+                                                        is_training=is_training,
+                                                        seed=config['zoneout_seed'],
                                                         hidden_state_keep_prob=hidden_state_keep_prob,
                                                         memory_cell_keep_prob=memory_cell_keep_prob)
 
             # if not just evaluation, then wrap cell in dropout
             if is_training and (input_keep_prob < 1 or output_keep_prob < 1 or keep_prob < 1):
-                cell = tf.nn.rnn_cell.DropoutWrapper(cell=cell, input_keep_prob=input_keep_prob,
+                # noinspection PyUnboundLocalVariable
+                cell = tf.nn.rnn_cell.DropoutWrapper(cell=cell,
+                                                     input_keep_prob=input_keep_prob,
                                                      output_keep_prob=output_keep_prob,
                                                      state_keep_prob=keep_prob,
                                                      variational_recurrent=config['recurrent_variational_dropout'],
                                                      seed=config['dropout_seed'])
 
             # add to collection
+            # noinspection PyUnboundLocalVariable
             cells.append(cell)
 
     # stack multiple cells if needed
@@ -987,10 +1042,11 @@ def _recurrent_cell(mode, config, recurrent_init, name=''):
 
 
 def _alphabet(mode, config):
-    """ Creates alphabet for alphabetized dihedral prediction. """
-
+    """
+    Creates alphabet for alphabetized dihedral prediction.
+    """
     # prepare initializer
-    if config['alphabet'] is not None:
+    if config['alphabet']:
         alphabet_initializer = tf.constant_initializer(config['alphabet'])  # user-defined alphabet
     else:
         alphabet_initializer = dict_to_init(config['alphabet_init'], config['alphabet_seed'])  # random initialization
@@ -1007,13 +1063,14 @@ def _alphabet(mode, config):
 
 
 def _dihedrals(mode, config, inputs, alphabet=None):
-    """ Converts internal representation resultant from RNN output activations
-        into dihedral angles based on one of many methods. 
+    """
+    Converts internal representation resultant from RNN output activations
+    into dihedral angles based on one of many methods.
 
-        The optional argument alphabet does not determine whether an alphabet 
-        should be created or not--that's controlled by config. Instead the
-        option allows the reuse of an existing alphabet. """
-
+    The optional argument alphabet does not determine whether an alphabet
+    should be created or not--that's controlled by config. Instead the
+    option allows the reuse of an existing alphabet.
+    """
     is_training = (mode == 'training')
 
     # output size for linear transform layer (OUTPUT_SIZE)
@@ -1021,31 +1078,36 @@ def _dihedrals(mode, config, inputs, alphabet=None):
 
     # set up non-linear dihedrals layer(s) if requested
     nonlinear_out_proj_size = config['recurrent_nonlinear_out_proj_size']
-    if nonlinear_out_proj_size is not None:
+    if nonlinear_out_proj_size:
         if config['recurrent_nonlinear_out_proj_normalization'] == 'batch_normalization':
             nonlinear_out_proj_normalization_fn = layers.batch_norm
-            nonlinear_out_proj_normalization_fn_opts = {'center': True, 'scale': True, 'decay': 0.9, 'epsilon': 0.001,
+            nonlinear_out_proj_normalization_fn_opts = {'center': True,
+                                                        'scale': True,
+                                                        'decay': 0.9,
+                                                        'epsilon': 0.001,
                                                         'is_training': tf.constant(is_training),
                                                         'scope': 'nonlinear_out_proj_batch_norm',
-                                                        'outputs_collections': config[
-                                                                                   'name'] + '_' + tf.GraphKeys.ACTIVATIONS}
+                                                        'outputs_collections': config['name'] + '_' + tf.GraphKeys.ACTIVATIONS}
         elif config['recurrent_nonlinear_out_proj_normalization'] == 'layer_normalization':
             nonlinear_out_proj_normalization_fn = layers.layer_norm
-            nonlinear_out_proj_normalization_fn_opts = {'center': True, 'scale': True,
+            nonlinear_out_proj_normalization_fn_opts = {'center': True,
+                                                        'scale': True,
                                                         'scope': 'nonlinear_out_proj_layer_norm',
-                                                        'outputs_collections': config[
-                                                                                   'name'] + '_' + tf.GraphKeys.ACTIVATIONS}
+                                                        'outputs_collections': config['name'] + '_' + tf.GraphKeys.ACTIVATIONS}
         else:
             nonlinear_out_proj_normalization_fn = None
             nonlinear_out_proj_normalization_fn_opts = None
 
+        # noinspection SpellCheckingInspection
         nonlinear_out_proj_fn = {'tanh': tf.tanh, 'relu': tf.nn.relu}[config['recurrent_nonlinear_out_proj_function']]
 
         outputs = inputs
-        for idx, (layer_size, init) in enumerate(
-                zip(nonlinear_out_proj_size, config['recurrent_nonlinear_out_proj_init'])):
+        for idx, (layer_size, init) in enumerate(zip(nonlinear_out_proj_size,
+                                                     config['recurrent_nonlinear_out_proj_init'])):
             recurrent_nonlinear_out_proj_init = dict_to_inits(init, config['recurrent_nonlinear_out_proj_seed'])
-            outputs = layers.fully_connected(outputs, layer_size, scope='nonlinear_dihedrals_' + str(idx),
+            outputs = layers.fully_connected(outputs,
+                                             layer_size,
+                                             scope='nonlinear_dihedrals_' + str(idx),
                                              activation_fn=nonlinear_out_proj_fn,
                                              normalizer_fn=nonlinear_out_proj_normalization_fn,
                                              normalizer_params=nonlinear_out_proj_normalization_fn_opts,
@@ -1062,7 +1124,10 @@ def _dihedrals(mode, config, inputs, alphabet=None):
 
     # set up linear transform variables
     recurrent_out_proj_init = dict_to_inits(config['recurrent_out_proj_init'], config['recurrent_out_proj_seed'])
-    linear = layers.fully_connected(dihedrals_inputs, output_size, activation_fn=None, scope='linear_dihedrals',
+    linear = layers.fully_connected(dihedrals_inputs,
+                                    output_size,
+                                    activation_fn=None,
+                                    scope='linear_dihedrals',
                                     weights_initializer=recurrent_out_proj_init['base'],
                                     biases_initializer=recurrent_out_proj_init['bias'],
                                     variables_collections={'weights': [tf.GraphKeys.WEIGHTS],
@@ -1073,19 +1138,27 @@ def _dihedrals(mode, config, inputs, alphabet=None):
     # reduce to dihedrals, through an alphabet if specified
     if config['is_alphabetized']:
         # create alphabet if one is not already there
-        if alphabet is None: alphabet = _alphabet(mode, config)
+        if alphabet is None:
+            alphabet = _alphabet(mode, config)
 
         # angularize alphabet if specified
-        if config['is_angularized']: alphabet = angularize(alphabet)
+        if config['is_angularized']:
+            alphabet = angularize(alphabet)
 
-        # batch or layer normalize linear inputs to softmax (stats are computed over all batches and timesteps, effectively flattened)
+        # batch or layer normalize linear inputs to softmax (stats are computed over all batches and time steps, effectively flattened)
         if config['alphabet_normalization'] == 'batch_normalization':
-            linear = layers.batch_norm(linear, center=True, scale=True, decay=0.999, epsilon=0.001,
+            linear = layers.batch_norm(linear,
+                                       center=True,
+                                       scale=True,
+                                       decay=0.999,
+                                       epsilon=0.001,
                                        is_training=tf.constant(is_training),
                                        scope='alphabet_batch_norm',
                                        outputs_collections=config['name'] + '_' + tf.GraphKeys.ACTIVATIONS)
         elif config['alphabet_normalization'] == 'layer_normalization':
-            linear = layers.layer_norm(linear, center=True, scale=True,
+            linear = layers.layer_norm(linear,
+                                       center=True,
+                                       scale=True,
                                        scope='alphabet_layer_norm',
                                        outputs_collections=config['name'] + '_' + tf.GraphKeys.ACTIVATIONS)
 
@@ -1095,9 +1168,11 @@ def _dihedrals(mode, config, inputs, alphabet=None):
                               name='probs')  # [NUM_STEPS x BATCH_SIZE, OUTPUT_SIZE]
         tf.add_to_collection(config['name'] + '_' + tf.GraphKeys.ACTIVATIONS, probs)
 
-        # dropout alphabet if specified. I don't renormalize since final angle is invariant wrt overall scale.
+        # dropout alphabet if specified. I don't re normalize since final angle is invariant wrt overall scale.
         if mode == 'training' and config['alphabet_keep_probability'] < 1:
-            probs = tf.nn.dropout(probs, config['alphabet_keep_probability'], seed=config['dropout_seed'],
+            probs = tf.nn.dropout(probs,
+                                  config['alphabet_keep_probability'],
+                                  seed=config['dropout_seed'],
                                   name='dropped_probs')
 
         # form final dihedrals based on mixture of alphabetized angles
@@ -1111,33 +1186,39 @@ def _dihedrals(mode, config, inputs, alphabet=None):
         dihedrals = linear
 
         # angularize if specified
-        if config['is_angularized']: dihedrals = angularize(dihedrals)
+        if config['is_angularized']:
+            dihedrals = angularize(dihedrals)
     # [NUM_STEPS, BATCH_SIZE, NUM_DIHEDRALS] (for both cases)
 
     # add angle shift
-    dihedrals = tf.add(dihedrals, tf.constant(config['angle_shift'], dtype=tf.float32, name='angle_shift'),
+    dihedrals = tf.add(dihedrals,
+                       tf.constant(config['angle_shift'],
+                                   dtype=tf.float32,
+                                   name='angle_shift'),
                        name='dihedrals')
 
     return dihedrals
 
 
 def _coordinates(config, dihedrals):
-    """ Converts dihedrals into full 3D structures. """
-
+    """
+    Converts dihedrals into full 3D structures.
+    """
     # converts dihedrals to points ready for reconstruction.
     points = dihedral_to_point(dihedrals)  # [NUM_STEPS x NUM_DIHEDRALS, BATCH_SIZE, NUM_DIMENSIONS]
-
     # converts points to final 3D coordinates.
-    coordinates = point_to_coordinate(points, num_fragments=config['num_reconstruction_fragments'],
+    coordinates = point_to_coordinate(points,
+                                      num_fragments=config['num_reconstruction_fragments'],
                                       parallel_iterations=config['num_reconstruction_parallel_iters'])
     # [NUM_STEPS x NUM_DIHEDRALS, BATCH_SIZE, NUM_DIMENSIONS]
-
     return coordinates
 
 
 def _drmsds(config, coordinates, targets, weights):
-    """ Computes reduced weighted dRMSD loss (as specified by weights) 
-        between predicted tertiary structures and targets. """
+    """
+    Computes reduced weighted dRMSD loss (as specified by weights)
+    between predicted tertiary structures and targets.
+    """
 
     # lose end residues if desired
     if config['num_edge_residues'] > 0:
@@ -1152,14 +1233,16 @@ def _drmsds(config, coordinates, targets, weights):
     drmsds = drmsd(coordinates, targets, weights, name='drmsds')  # [BATCH_SIZE]
 
     # add to relevant collections for summaries, etc.
-    if config['log_model_summaries']: tf.add_to_collection(config['name'] + '_drmsdss', drmsds)
+    if config['log_model_summaries']:
+        tf.add_to_collection(config['name'] + '_drmsdss', drmsds)
 
     return drmsds
 
 
 def _reduce_loss_quotient(config, losses, masks, group_filter, name_prefix=''):
-    """ Reduces loss according to normalization order. """
-
+    """
+    Reduces loss according to normalization order.
+    """
     normalization = config['tertiary_normalization']
     num_edge_residues = config['num_edge_residues']
     max_seq_length = config['num_steps']
@@ -1173,34 +1256,44 @@ def _reduce_loss_quotient(config, losses, masks, group_filter, name_prefix=''):
             loss_factors = tf.boolean_mask(effective_steps(masks, num_edge_residues), group_filter)
             fixed_denominator_factor = float(max_seq_length - num_edge_residues)
         elif case('second'):
-            eff_num_stepss = tf.boolean_mask(effective_steps(masks, num_edge_residues), group_filter)
-            loss_factors = (tf.square(eff_num_stepss) - eff_num_stepss) / 2.0
+            eff_num_steps = tf.boolean_mask(effective_steps(masks, num_edge_residues), group_filter)
+            loss_factors = (tf.square(eff_num_steps) - eff_num_steps) / 2.0
             fixed_denominator_factor = float(max_seq_length - num_edge_residues)
             fixed_denominator_factor = ((fixed_denominator_factor ** 2) - fixed_denominator_factor) / 2.0
 
+    # noinspection PyUnboundLocalVariable
     numerator = tf.reduce_sum(loss_factors * losses_filtered, name=name_prefix + '_numerator')
 
     if config['batch_dependent_normalization'] or normalization == 'zeroth':
         denominator = tf.reduce_sum(loss_factors, name=name_prefix + '_denominator')
     else:
-        denominator = tf.multiply(tf.cast(tf.size(loss_factors), tf.float32), fixed_denominator_factor,
+        # noinspection PyUnboundLocalVariable
+        denominator = tf.multiply(tf.cast(tf.size(loss_factors),
+                                          tf.float32),
+                                  fixed_denominator_factor,
                                   name=name_prefix + '_denominator')
 
     return numerator, denominator
 
 
 def _accumulate_loss(config, numerator, denominator, name_prefix=''):
-    """ Constructs ops to accumulate and reduce loss and maintain a memory of lowest loss achieved """
+    """
+    Constructs ops to accumulate and reduce loss and maintain a memory of lowest loss achieved.
+    """
 
     if config['num_evaluation_invocations'] == 1:
         # return simple loss
-        accumulated_loss = tf.divide(numerator, denominator, name=name_prefix)
+        accumulated_loss = tf.divide(numerator,
+                                     denominator,
+                                     name=name_prefix)
         update_op = reduce_op = tf.no_op()
     else:
         # create accumulator variables. note that tf.Variable uses name_scope (not variable_scope) for naming, which is what's desired in this instance
-        numerator_accumulator = tf.Variable(initial_value=0., trainable=False,
+        numerator_accumulator = tf.Variable(initial_value=0.,
+                                            trainable=False,
                                             name=name_prefix + '_numerator_accumulator')
-        denominator_accumulator = tf.Variable(initial_value=0., trainable=False,
+        denominator_accumulator = tf.Variable(initial_value=0.,
+                                              trainable=False,
                                               name=name_prefix + '_denominator_accumulator')
 
         # accumulate
@@ -1220,9 +1313,12 @@ def _accumulate_loss(config, numerator, denominator, name_prefix=''):
             zero_denominator = tf.assign(denominator_accumulator, 0.)
             reduce_op = tf.group(zero_numerator, zero_denominator, name=name_prefix + '_reduce_op')
 
-    min_loss_achieved = tf.Variable(initial_value=float('inf'), trainable=False,
+    min_loss_achieved = tf.Variable(initial_value=float('inf'),
+                                    trainable=False,
                                     name='min_' + name_prefix + '_achieved')
-    min_loss_op = tf.assign(min_loss_achieved, tf.reduce_min([min_loss_achieved, accumulated_loss]),
+    min_loss_op = tf.assign(min_loss_achieved,
+                            tf.reduce_min([min_loss_achieved,
+                                           accumulated_loss]),
                             name='min_' + name_prefix + '_achieved_op')
     with tf.control_dependencies([min_loss_op]):
         min_loss_achieved = tf.identity(min_loss_achieved)
@@ -1231,7 +1327,9 @@ def _accumulate_loss(config, numerator, denominator, name_prefix=''):
 
 
 def _training(config, loss):
-    """ Creates loss optimizer and returns minimization op. """
+    """
+    Creates loss optimizer and returns minimization op.
+    """
 
     # helper function
     optimizer_args = lambda o: o.__init__.__code__.co_varnames[:o.__init__.__code__.co_argcount]
@@ -1261,9 +1359,13 @@ def _training(config, loss):
                 grads_and_vars = [(tf.clip_by_value(g, -threshold, threshold), v) for g, v in grads_and_vars]
 
     # apply gradients and return stepping op
-    global_step = tf.get_variable(initializer=tf.constant_initializer(0), shape=[], trainable=False, dtype=tf.int32,
+    global_step = tf.get_variable(initializer=tf.constant_initializer(0),
+                                  shape=[],
+                                  trainable=False,
+                                  dtype=tf.int32,
                                   name='global_step')
-    minimize_op = optimizer.apply_gradients(grads_and_vars, global_step=global_step)
+    minimize_op = optimizer.apply_gradients(grads_and_vars,
+                                            global_step=global_step)
 
     # dict useful for diagnostics
     grads_and_vars_dict = {}
@@ -1273,8 +1375,10 @@ def _training(config, loss):
     return global_step, minimize_op, grads_and_vars_dict
 
 
-def _history(config, loss, loss_history=None, scaling_factor=LOSS_SCALING_FACTOR):
-    """ Creates op for loss history updating. """
+def _history(loss, loss_history=None, scaling_factor=LOSS_SCALING_FACTOR):
+    """
+    Creates op for loss history updating.
+    """
 
     # op for shifting history, i.e. adding new loss, dropping oldest one
     # new_history = tf.concat([loss_history[1:], tf.expand_dims(loss * scaling_factor, 0)], 0)
@@ -1286,7 +1390,9 @@ def _history(config, loss, loss_history=None, scaling_factor=LOSS_SCALING_FACTOR
 
 
 def _curriculum(config, step, loss_history, dependency_ops):
-    """ Creates TF ops for maintaining and advancing the curriculum. """
+    """
+    Creates TF ops for maintaining and advancing the curriculum.
+    """
 
     # assign appropriate curriculum increment value
     for case in Switch(config['behavior']):
@@ -1295,22 +1401,35 @@ def _curriculum(config, step, loss_history, dependency_ops):
             increment = tf.constant(config['rate'], name='curriculum_increment')
         elif case('loss_threshold'):
             # return fixed increment if last loss is below threshold, zero otherwise
-            increment_pred = tf.less(loss_history[-1], config['threshold'], name='curriculum_predicate')
+            increment_pred = tf.less(loss_history[-1],
+                                     config['threshold'],
+                                     name='curriculum_predicate')
             full_increment_func = lambda: tf.constant(config['rate'], name='full_curriculum_increment')
             zero_increment_func = lambda: tf.constant(0.0, name='zero_curriculum_increment')
-            increment = tf.cond(increment_pred, full_increment_func, zero_increment_func)
+            increment = tf.cond(increment_pred,
+                                full_increment_func,
+                                zero_increment_func)
         elif case('loss_change'):
             # predicate for increment type
-            increment_pred = tf.not_equal(loss_history[0], DUMMY_LOSS, name='curriculum_predicate')
+            increment_pred = tf.not_equal(loss_history[0],
+                                          DUMMY_LOSS,
+                                          name='curriculum_predicate')
 
             # increment function for when loss history is still
             def full_increment_func():
-                lin_seq = tf.expand_dims(tf.linspace(0., 1., config['change_num_iterations']), 1)
-                ls_matrix = tf.concat([tf.ones_like(lin_seq), lin_seq], 1)
+                lin_seq = tf.expand_dims(tf.linspace(0.,
+                                                     1.,
+                                                     config['change_num_iterations']),
+                                         1)
+                ls_matrix = tf.concat([tf.ones_like(lin_seq),
+                                       lin_seq],
+                                      1)
                 ls_rhs = tf.expand_dims(loss_history, 1)
                 ls_slope = tf.matrix_solve_ls(ls_matrix, ls_rhs)[1, 0]
 
-                full_increment = tf.div(config['rate'], tf.pow(tf.abs(ls_slope) + 1, config['sharpness']),
+                full_increment = tf.div(config['rate'],
+                                        tf.pow(tf.abs(ls_slope) + 1,
+                                               config['sharpness']),
                                         name='full_curriculum_increment')
 
                 return full_increment
@@ -1323,6 +1442,9 @@ def _curriculum(config, step, loss_history, dependency_ops):
 
     # create updating op. the semantics are such that training / gradient update is first performed before the curriculum is incremented.
     with tf.control_dependencies(dependency_ops):
-        update_op = tf.assign_add(step, increment, name='update_curriculum_op')
+        # noinspection PyUnboundLocalVariable
+        update_op = tf.assign_add(step,
+                                  increment,
+                                  name='update_curriculum_op')
 
     return update_op
